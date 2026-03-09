@@ -53,3 +53,4 @@ output_migrator/
 
 # Output from migrator
 output_migrator
+.vs/slnx.sqlite
