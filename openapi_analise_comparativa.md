@@ -1,24 +1,28 @@
 # OpenAPI 2.0 vs 3.x — Análise Comparativa e Engenharia Reversa erwin DM
 
-> Documento técnico de referência — Versão 1.0 | 2025
+> Documento técnico de referência — Versão 1.1 | 2026
 
 ---
 
 ## Índice
 
 1. [Introdução](#1-introdução)
-2. [erwin DM e Engenharia Reversa de OpenAPI](#2-erwin-dm-e-engenharia-reversa-de-openapi)
-   - 2.1 [Suporte Nativo do erwin DM](#21-suporte-nativo-do-erwin-dm)
-   - 2.2 [O que o erwin DM Efetivamente Importa](#22-o-que-o-erwin-dm-efetivamente-importa)
-   - 2.3 [Como o erwin Armazena as Informações](#23-como-o-erwin-armazena-as-informações)
-   - 2.4 [Análise dos Erros ao Importar OpenAPI 2.0 no erwin](#24-análise-dos-erros-ao-importar-openapi-20-no-erwin)
-   - 2.5 [Recomendações para Importação no erwin DM](#25-recomendações-para-importação-no-erwin-dm)
-3. [Comparativo de Campos: OpenAPI 2.0 vs 3.x](#3-comparativo-de-campos-openapi-20-vs-3x)
-4. [Principais Mudanças entre 2.0 e 3.x](#4-principais-mudanças-entre-20-e-3x)
-5. [Exemplos YAML](#5-exemplos-yaml)
-6. [Scripts Python](#6-scripts-python)
-7. [Guia de Referência Rápida](#7-guia-de-referência-rápida)
-8. [Conclusão](#8-conclusão)
+2. [Estrutura de Alto Nível do OpenAPI 3.0](#2-estrutura-de-alto-nível-do-openapi-30)
+3. [erwin DM e Engenharia Reversa de OpenAPI](#3-erwin-dm-e-engenharia-reversa-de-openapi)
+   - 3.1 [Suporte Nativo do erwin DM](#31-suporte-nativo-do-erwin-dm)
+   - 3.2 [O que o erwin DM Efetivamente Importa](#32-o-que-o-erwin-dm-efetivamente-importa)
+   - 3.3 [Comportamento Observado na Engenharia Reversa](#33-comportamento-observado-na-engenharia-reversa)
+   - 3.4 [Como o erwin Armazena as Informações](#34-como-o-erwin-armazena-as-informações)
+   - 3.5 [Análise dos Erros ao Importar OpenAPI 2.0 no erwin](#35-análise-dos-erros-ao-importar-openapi-20-no-erwin)
+   - 3.6 [Mapeamento de Tipos de Entidade no erwin DM](#36-mapeamento-de-tipos-de-entidade-no-erwin-dm)
+   - 3.7 [Recomendações para Importação no erwin DM](#37-recomendações-para-importação-no-erwin-dm)
+4. [Comparativo de Campos: OpenAPI 2.0 vs 3.x](#4-comparativo-de-campos-openapi-20-vs-3x)
+5. [Principais Mudanças entre 2.0 e 3.x](#5-principais-mudanças-entre-20-e-3x)
+6. [Exemplos YAML](#6-exemplos-yaml)
+7. [Scripts Python](#7-scripts-python)
+8. [Guia de Referência Rápida](#8-guia-de-referência-rápida)
+9. [Case: Engenharia Reversa no erwin DM — Do 2.0 ao 3.0](#9-case-engenharia-reversa-no-erwin-dm--do-20-ao-30)
+10. [Conclusão](#10-conclusão)
 
 ---
 
@@ -28,22 +32,146 @@ O OpenAPI Specification (OAS) é o padrão mais adotado para descrição de APIs
 
 Este documento cobre:
 
+- Estrutura de alto nível do padrão OpenAPI 3.0
 - Análise de engenharia reversa do erwin DM ao importar arquivos OpenAPI 2.0 e 3.0
 - O que o erwin efetivamente importa e como armazena as informações
 - Análise dos erros e comportamentos observados ao importar arquivos 2.0 no importador 3.0 do erwin
 - Tabela comparativa completa de campos: o que mudou, o que foi migrado e o que foi descontinuado
 - Exemplos YAML comentados — `openapi_2.0_example.yaml` e `openapi_3.0_example.yaml`
 - Três scripts Python: migrador 2.x→3.x, migrador 3.x→2.x e validador de sintaxe
+- Case prático com o processo completo de engenharia reversa
 
 ---
 
-## 2. erwin DM e Engenharia Reversa de OpenAPI
+## 2. Estrutura de Alto Nível: OpenAPI 2.0 vs 3.0
 
-### 2.1 Suporte Nativo do erwin DM
+### 2.1 Visão comparativa no erwin DM
 
-O erwin Data Modeler (DM) oferece importação nativa de especificações **OpenAPI 3.0**. Não existe opção de importação dedicada ao formato 2.0 (Swagger). Ao tentar carregar um arquivo Swagger 2.0 através do importador OpenAPI 3.0, o erwin tenta processar o arquivo, mas encontra incompatibilidades estruturais que resultam em erros e importação parcial.
+Antes de entrar nos detalhes, veja como as duas versões aparecem visualmente no erwin DM ao colapsar todos os nós:
 
-### 2.2 O que o erwin DM Efetivamente Importa
+| OpenAPI 2.0 — raiz no erwin | OpenAPI 3.0 — raiz no erwin |
+|:---:|:---:|
+| ![Árvore 2.0 colapsada](erwin_images/erwinDM_OpenAPI%20(7).png) | ![Árvore 3.0 colapsada](erwin_images/erwinDM_OpenAPI%20(4).png) |
+| `components` + `paths` + **`definitions`** (extra) | `components` + `paths` (estrutura limpa) |
+
+> O nó `definitions` na raiz é o sinal imediato de que um arquivo 2.0 foi importado sem conversão — ele não existe no padrão 3.0.
+
+---
+
+### 2.2 Estrutura de alto nível: OpenAPI 2.0 (Swagger)
+
+```yaml
+swagger: "2.0"            # obrigatório — identifica a versão
+
+info: {}                  # obrigatório — título, versão, contato, licença
+
+host: ""                  # servidor — domínio (ex: api.exemplo.com)
+basePath: ""              # servidor — prefixo de URL (ex: /v1)
+schemes: []               # servidor — protocolos (https, http)
+
+consumes: []              # media types aceitos globalmente na requisição
+produces: []              # media types produzidos globalmente na resposta
+
+security: []              # segurança global
+securityDefinitions: {}   # definição dos esquemas de segurança
+
+tags: []                  # agrupadores de operações
+externalDocs: {}          # link para documentação externa
+
+parameters: {}            # parâmetros reutilizáveis (nível raiz)
+responses: {}             # respostas reutilizáveis (nível raiz)
+definitions: {}           # schemas/modelos de dados (equivale a components/schemas)
+
+paths: {}                 # obrigatório — endpoints e operações HTTP
+```
+
+**Subestrutura de `definitions`** — todos os schemas de dados ficam aqui:
+
+```yaml
+definitions:
+  Pedido: {}        # schema de dados
+  ItemPedido: {}
+  Endereco: {}
+  Erro: {}
+  # ... demais modelos
+```
+
+---
+
+### 2.3 Estrutura de alto nível: OpenAPI 3.0
+
+```yaml
+openapi: "3.0.3"   # obrigatório — versão da spec
+
+info: {}           # obrigatório — metadados (título, versão, licença...)
+
+servers: []        # lista de servidores com URL completa (substitui host+basePath+schemes)
+
+security: []       # segurança global aplicada a todos os paths
+
+tags: []           # agrupadores de operações
+externalDocs: {}   # link para documentação externa
+
+paths: {}          # obrigatório* — endpoints e operações HTTP
+
+components: {}     # biblioteca central de objetos reutilizáveis (ver abaixo)
+```
+
+> `*` `paths` pode ser `{}` tecnicamente, mas é obrigatório na prática.
+
+**Subestrutura de `components`** — substitui todos os objetos de nível raiz do 2.0:
+
+```yaml
+components:
+  schemas: {}          # Modelos de dados               ← era 'definitions' no 2.0
+  responses: {}        # Respostas HTTP reutilizáveis   ← era 'responses' raiz no 2.0
+  parameters: {}       # Parâmetros reutilizáveis       ← era 'parameters' raiz no 2.0
+  securitySchemes: {}  # Esquemas de segurança          ← era 'securityDefinitions' no 2.0
+  requestBodies: {}    # Corpos de requisição           ← NOVO no 3.0
+  headers: {}          # Cabeçalhos reutilizáveis       ← NOVO no 3.0
+  links: {}            # Links hipermídia               ← NOVO no 3.0
+  examples: {}         # Exemplos reutilizáveis         ← NOVO no 3.0
+  callbacks: {}        # Callbacks/webhooks             ← NOVO no 3.0
+```
+
+---
+
+### 2.4 Comparação de chaves raiz: 2.0 vs 3.0
+
+| Chave raiz 2.0 (Swagger)        | Equivalente em 3.0                        | Diferença |
+|----------------------------------|-------------------------------------------|-----------|
+| `swagger: "2.0"`                 | `openapi: "3.0.x"`                        | Renomeado |
+| `host` + `basePath` + `schemes`  | `servers[]`                               | Consolidado em array |
+| `consumes` / `produces`          | *(removido)*                              | Vai para `content:` por operação |
+| `definitions`                    | `components/schemas`                      | Movido para `components` |
+| `parameters` (raiz)              | `components/parameters`                   | Movido para `components` |
+| `responses` (raiz)               | `components/responses`                    | Movido para `components` |
+| `securityDefinitions`            | `components/securitySchemes`              | Renomeado + movido |
+| `paths`                          | `paths`                                   | Idêntico |
+| *(não existe)*                   | `components/requestBodies`                | Novo |
+| *(não existe)*                   | `components/headers`                      | Novo |
+| *(não existe)*                   | `components/links`                        | Novo |
+| *(não existe)*                   | `components/examples`                     | Novo |
+| *(não existe)*                   | `components/callbacks`                    | Novo |
+
+### 2.5 OpenAPI 3.1 — Adições
+
+O OpenAPI 3.1 acrescenta mais duas chaves de nível raiz:
+
+```yaml
+webhooks: {}           # webhooks de nível raiz (antes só em callbacks)
+jsonSchemaDialect: ""  # dialeto JSON Schema usado nos schemas
+```
+
+---
+
+## 3. erwin DM e Engenharia Reversa de OpenAPI
+
+### 3.1 Suporte Nativo do erwin DM
+
+O erwin Data Modeler (DM) oferece importação nativa de especificações **OpenAPI 3.0 como único DBMS alvo**. Não existe opção de importação dedicada ao formato 2.0 (Swagger). Ao tentar carregar um arquivo Swagger 2.0 através do importador OpenAPI 3.0, o erwin tenta processar o arquivo, mas encontra incompatibilidades estruturais que resultam em erros e importação parcial.
+
+### 3.2 O que o erwin DM Efetivamente Importa
 
 | Elemento OpenAPI | Mapeado para | Como é Armazenado | Nível de Importação |
 |---|---|---|---|
@@ -64,7 +192,86 @@ O erwin Data Modeler (DM) oferece importação nativa de especificações **Open
 | `links` (3.0) | — | Links HATEOAS não têm representação no modelo ER do erwin | ❌ Ignorado |
 | `x-extensions` | Propriedades customizadas | Extensões x-* armazenadas como propriedades extras | ✅ Completo |
 
-### 2.3 Como o erwin Armazena as Informações
+### 3.3 Comportamento Observado na Engenharia Reversa
+
+#### Importando OpenAPI 3.0 — estrutura correta e completa
+
+![Modelo OpenAPI 3.0 no erwin DM — árvore completa](erwin_images/erwinDM_OpenAPI%20(3).png)
+
+```
+openapi_3.0_example (+)
+├── components
+│   ├── schemas          ← POPULADO com as entidades de dados
+│   │   ├── Pedido
+│   │   ├── PedidoCriacao
+│   │   ├── PedidoPatch
+│   │   ├── ItemPedido
+│   │   ├── Endereco
+│   │   └── Erro
+│   ├── parameters       ← com conteúdo
+│   ├── responses        ← com conteúdo
+│   ├── securitySchemes  ← com conteúdo
+│   ├── links
+│   ├── examples
+│   ├── headers
+│   ├── requestBodies
+│   └── callbacks
+└── paths
+    ├── /pedidos                      get / post
+    ├── /pedidos/{pedidoId}           get / put / patch / delete
+    ├── /pedidos/{pedidoId}/itens     get
+    ├── /clientes/{clienteId}/pedidos get
+    └── /produtos/upload              post
+```
+
+#### Importando OpenAPI 2.0 — estrutura quebrada (comportamento real observado)
+
+| Visão colapsada | Visão expandida |
+|:---:|:---:|
+| ![Árvore 2.0 — nós raiz](erwin_images/erwinDM_OpenAPI%20(7).png) | ![Árvore 2.0 — definitions expandido](erwin_images/erwinDM_OpenAPI%20(2).png) |
+| Revela os 3 nós raiz: `components`, `paths`, `definitions` | `definitions` expandido com os 6 schemas, `components` vazio |
+
+```
+openapi_2.0_example (+)
+├── components          ← VAZIO ao expandir todos os subnós
+│   ├── schemas         ← vazio (schemas NÃO foram promovidos)
+│   ├── responses       ← vazio
+│   ├── examples        ← vazio
+│   ├── parameters      ← vazio
+│   ├── headers         ← vazio
+│   ├── requestBodies   ← vazio
+│   ├── securitySchemes ← vazio
+│   ├── links           ← vazio
+│   └── callbacks       ← vazio
+├── paths               ← IGUAL ao 3.0 (único elemento preservado corretamente)
+│   ├── /pedidos                      get / post
+│   ├── /pedidos/{pedidoId}           get / put / patch / delete
+│   ├── /pedidos/{pedidoId}/itens     get
+│   ├── /clientes/{clienteId}/pedidos get
+│   └── /produtos/upload              post
+└── definitions         ← NÓ EXTRA criado na raiz — não existe no padrão 3.0
+    ├── Erro
+    ├── Endereco
+    ├── ItemPedido
+    ├── PedidoPatch
+    ├── PedidoCriacao
+    └── Pedido
+```
+
+#### Diferenças concretas entre os dois modelos no erwin
+
+| Aspecto                    | OpenAPI 3.0 importado    | OpenAPI 2.0 importado                   |
+|----------------------------|--------------------------|-----------------------------------------|
+| `components/schemas`       | Populado com entidades   | **Vazio**                               |
+| Schemas de dados           | Dentro de `components`   | **Em `definitions` (nó raiz separado)** |
+| `paths`                    | Completo, com operações  | **Igual** — paths são preservados       |
+| `components` restantes     | Com conteúdo reutilizável| **Todos vazios**                        |
+| Nó `definitions`           | Não existe               | **Criado fora de `components`**         |
+| Erros de importação        | Nenhum                   | **Dezenas de EMU-1003**                 |
+
+> **Conclusão:** o erwin reconhece a chave `definitions` do 2.0 mas **não a promove** para `components/schemas`. Os schemas ficam em um nó `definitions` isolado, enquanto `components` permanece estruturalmente presente porém sem conteúdo. O único elemento que sobrevive íntegro são os `paths`.
+
+### 3.4 Como o erwin Armazena as Informações
 
 Internamente, o erwin DM representa a especificação OpenAPI em um modelo orientado a recursos (não puramente relacional). Os principais aspectos de armazenamento são:
 
@@ -75,22 +282,84 @@ Internamente, o erwin DM representa a especificação OpenAPI em um modelo orien
 - **Segurança:** esquemas de segurança são armazenados como configurações globais do modelo, não como entidades ER.
 - **Metadados:** `info.title`, `info.version` e `info.description` são armazenados como propriedades do modelo.
 
-### 2.4 Análise dos Erros ao Importar OpenAPI 2.0 no erwin
+### 3.5 Análise dos Erros ao Importar OpenAPI 2.0 no erwin
+
+#### Erros EMU-1003 — causa raiz
+
+```
+EMU-1003: Property type 'JSON_Col_Array_Options' cannot be set on object type
+          'Attribute' for the target DBMS 'OpenAPI 3.0'
+
+EMU-1003: Property type 'JSON_Col_Format' cannot be set on object type
+          'Attribute' for the target DBMS 'OpenAPI 3.0'
+
+EMU-1003: Property type 'JSON_Object_Ref_Property' cannot be set on object type
+          'Attribute' for the target DBMS 'OpenAPI 3.0'
+```
+
+No 2.0, `type`, `format` e `enum` ficam **diretamente no parâmetro**. No modelo interno do erwin (baseado em 3.0), essas propriedades devem estar dentro de um bloco `schema: {}`. Como o erwin não faz essa conversão automaticamente, gera um EMU-1003 para cada atributo afetado.
+
+```yaml
+# 2.0 — causa EMU-1003
+parameters:
+  - name: limit
+    in: query
+    type: integer       # ← direto no parâmetro
+    format: int32       # ← direto no parâmetro
+
+# 3.0 — estrutura esperada pelo erwin
+parameters:
+  - name: limit
+    in: query
+    schema:
+      type: integer     # ← dentro de schema
+      format: int32     # ← dentro de schema
+```
+
+#### Tabela de erros e comportamentos
 
 | Tipo de Erro/Comportamento | Descrição | Solução Recomendada | Severidade |
 |---|---|---|---|
-| Erro de versão | erwin espera `openapi: 3.x.x`. Não reconhece `swagger: 2.0` como válido. | Migrar o arquivo para 3.0 antes de importar usando `migrador_2to3.py`. | 🔴 Crítico |
-| Falha em `securityDefinitions` | erwin não processa `securityDefinitions` (chave do 2.0). Em 3.0 é `components/securitySchemes`. | Converter com migrador. erwin pode importar mas ignorar autenticação. | 🟠 Alto |
-| Parâmetros `body`/`formData` | erwin não mapeia `in: body` e `in: formData` para entidades. Ficam sem correspondência no modelo. | Em 3.0 tornam-se `requestBody` com `content{}`. Verificar manualmente após import. | 🟠 Alto |
-| `$ref` desatualizado | Referências `#/definitions/X` são inválidas em 3.0. Se erwin tenta parsear como 3.0, os $ref quebram. | `migrador_2to3.py` atualiza todos os $ref automaticamente para `#/components/schemas/X`. | 🟠 Alto |
-| `consumes`/`produces` ignorados | Campos globais `consumes` e `produces` são ignorados pelo importador 3.0. | Em 3.0 não existem mais; o media type fica em `content{}`. Sem impacto se migrado. | 🟡 Médio |
-| `definitions` vs `schemas` | erwin espera schemas em `components/schemas`. Os `definitions` podem ser ignorados ou importados parcialmente. | Migrar para 3.0. Verificar se todas as entidades foram geradas após import. | 🟡 Médio |
-| `type: file` | `type: file` em parâmetros formData não é suportado em 3.0. Pode gerar erro de schema inválido. | Em 3.0 usar `type: string, format: binary` dentro de `requestBody multipart/form-data`. | 🟡 Médio |
-| `host`/`basePath`/`schemes` | erwin pode não montar a URL base corretamente a partir dos três campos separados. | Em 3.0 a URL completa está em `servers[].url` — formato preferido pelo erwin. | 🟢 Baixo |
-| Tags sem declaração raiz | erwin pode importar tags sem que estejam declaradas na seção `tags` raiz, gerando grupos sem descrição. | Declarar todas as tags na seção `tags` da raiz da especificação. | 🟢 Baixo |
-| Campos `x-` (extensões) | Extensões `x-*` são aceitas em ambas versões e preservadas pelo erwin como propriedades customizadas. | Sem ação necessária. | ℹ️ Info |
+| Erro de versão | erwin espera `openapi: 3.x.x`. Não reconhece `swagger: 2.0` como válido. | Migrar o arquivo para 3.0 antes de importar. | 🔴 Crítico |
+| Falha em `securityDefinitions` | erwin não processa `securityDefinitions`. Em 3.0 é `components/securitySchemes`. | Converter com migrador. | 🟠 Alto |
+| Parâmetros `body`/`formData` | erwin não mapeia `in: body` e `in: formData` para entidades. Ficam sem correspondência. | Em 3.0 tornam-se `requestBody`. | 🟠 Alto |
+| `$ref` desatualizado | Referências `#/definitions/X` são inválidas em 3.0. Os $ref quebram. | O migrador atualiza todos os $ref automaticamente. | 🟠 Alto |
+| `definitions` como nó raiz extra | erwin não promove `definitions` para `components/schemas`. | Converter para 3.0 antes de importar. | 🟠 Alto |
+| EMU-1003 em massa | `type`/`format`/`enum` direto no parâmetro não é válido no modelo 3.0 do erwin. | Converter para 3.0 (propriedades vão para `schema:{}`). | 🟠 Alto |
+| `consumes`/`produces` ignorados | Campos globais ignorados pelo importador 3.0. | Em 3.0 o media type fica em `content{}`. | 🟡 Médio |
+| `type: file` | `type: file` em formData pode gerar schema inválido. | Em 3.0 usar `format: binary` dentro de `requestBody`. | 🟡 Médio |
+| `host`/`basePath`/`schemes` | erwin pode não montar a URL base corretamente a partir dos três campos. | Em 3.0 a URL completa está em `servers[].url`. | 🟢 Baixo |
+| Campos `x-` (extensões) | Extensões `x-*` são aceitas em ambas versões. | Sem ação necessária. | ℹ️ Info |
 
-### 2.5 Recomendações para Importação no erwin DM
+### 3.6 Mapeamento de Tipos de Entidade no erwin DM
+
+O editor de objetos do erwin para OpenAPI 3.0 lista os seguintes tipos de entidade. O modelo 3.0 exibe o objeto `openapi_3.0_example` selecionado; o modelo 2.0 exibe `openapi_2.0_example` — repare que a lista de tipos é idêntica, mas a diferença está no conteúdo gerado.
+
+| Editor — `openapi_3.0_example` / `requestBody` selecionado | Editor — `openapi_2.0_example` selecionado |
+|:---:|:---:|
+| ![Editor de objeto OpenAPI 3.0](erwin_images/erwinDM_OpenAPI%20(1).png) | ![Editor de objeto OpenAPI 2.0](erwin_images/erwinDM_OpenAPI%20(5).png) |
+| Lista de tipos idêntica — `requestBody` destacado em azul | Lista de tipos idêntica — modelo 2.0 selecionado |
+
+> **Detalhe:** a lista de tipos de entidade é **idêntica** nos dois modelos — o erwin usa o mesmo esquema interno. A diferença está no conteúdo gerado: no 3.0, `requestBody` é populado; no 2.0, fica vazio porque o erwin não converte `in: body` automaticamente.
+
+| Entidade no erwin  | Origem na spec OpenAPI 3.0       |
+|--------------------|----------------------------------|
+| `callback`         | `components/callbacks`           |
+| `encoding`         | encoding dentro de `requestBody` |
+| `example`          | `components/examples`            |
+| `header`           | `components/headers`             |
+| `link`             | `components/links`               |
+| `media`            | media type dentro de `content:`  |
+| `medias`           | agrupador de media types         |
+| `operation`        | verbo HTTP dentro de um path     |
+| `parameter`        | `components/parameters`          |
+| `requestBody`      | `components/requestBodies`       |
+| `response`         | `components/responses`           |
+| `securityScheme`   | `components/securitySchemes`     |
+
+> O tipo `requestBody` **só existe** no modelo OpenAPI 3.0 do erwin. Ao importar um 2.0, os parâmetros `in: body` e `in: formData` **não são automaticamente transformados** em `requestBody`.
+
+### 3.7 Recomendações para Importação no erwin DM
 
 1. **Converter** o arquivo 2.0 para 3.0 usando o script `migrador_2to3.py` fornecido.
 2. **Validar** o arquivo resultante com `validador_openapi.py` para garantir que não há erros de sintaxe.
@@ -100,7 +369,7 @@ Internamente, o erwin DM representa a especificação OpenAPI em um modelo orien
 
 ---
 
-## 3. Comparativo de Campos: OpenAPI 2.0 vs 3.x
+## 4. Comparativo de Campos: OpenAPI 2.0 vs 3.x
 
 **Legenda:**
 - ✅ `MANTIDO` — campo idêntico em ambas as versões
@@ -180,9 +449,9 @@ Internamente, o erwin DM representa a especificação OpenAPI em um modelo orien
 
 ---
 
-## 4. Principais Mudanças entre 2.0 e 3.x
+## 5. Principais Mudanças entre 2.0 e 3.x
 
-### 4.1 Reestruturação do Servidor
+### 5.1 Reestruturação do Servidor
 
 A mudança mais visível é a eliminação dos campos `host`, `basePath` e `schemes`, substituídos pelo array `servers`:
 
@@ -201,7 +470,7 @@ servers:
     description: Sandbox
 ```
 
-### 4.2 Corpo da Requisição
+### 5.2 Corpo da Requisição
 
 Em 2.0, o body era um parâmetro com `in: body`. Em 3.0 existe o objeto `requestBody` separado, permitindo especificar diferentes representações com schemas distintos:
 
@@ -226,7 +495,7 @@ requestBody:
         $ref: "#/components/schemas/Pedido"
 ```
 
-### 4.3 Upload de Arquivo
+### 5.3 Upload de Arquivo
 
 ```yaml
 # OpenAPI 2.0
@@ -246,7 +515,7 @@ requestBody:
             format: binary   # ← substitui type: file
 ```
 
-### 4.4 Componentes Reutilizáveis
+### 5.4 Componentes Reutilizáveis
 
 O 2.0 tinha seções de nível raiz separadas. O 3.0 consolida tudo sob `components`:
 
@@ -262,7 +531,7 @@ O 2.0 tinha seções de nível raiz separadas. O 3.0 consolida tudo sob `compone
 | *(não existe)* | `components/links/*` 🟢 |
 | *(não existe)* | `components/callbacks/*` 🟢 |
 
-### 4.5 Segurança
+### 5.5 Segurança
 
 ```yaml
 # OpenAPI 2.0
@@ -299,7 +568,7 @@ components:
           scopes: {}
 ```
 
-### 4.6 Polimorfismo de Schemas
+### 5.6 Polimorfismo de Schemas
 
 | Construção | 2.0 | 3.0 |
 |---|---|---|
@@ -313,11 +582,11 @@ components:
 
 ---
 
-## 5. Exemplos YAML
+## 6. Exemplos YAML
 
 Dois arquivos de referência foram criados modelando a mesma API (**Gestão de Pedidos**) para facilitar comparação direta.
 
-### 5.1 Recursos Modelados nos Exemplos
+### 6.1 Recursos Modelados nos Exemplos
 
 | Endpoint | Métodos | Descrição |
 |---|---|---|
@@ -327,11 +596,11 @@ Dois arquivos de referência foram criados modelando a mesma API (**Gestão de P
 | `/clientes/{clienteId}/pedidos` | GET | Multi-tag (clientes + pedidos) |
 | `/produtos/upload` | POST | Upload multipart/form-data |
 
-### 5.2 Schemas Modelados
+### 6.2 Schemas Modelados
 
 `Pedido`, `PedidoCriacao`, `PedidoPatch`, `ItemPedido`, `Endereco`, `Erro`
 
-### 5.3 Atributos Cobertos por Versão
+### 6.3 Atributos Cobertos por Versão
 
 **`openapi_2.0_example.yaml`:** `swagger`, `info`, `host`, `basePath`, `schemes`, `consumes`, `produces`, `security`, `securityDefinitions` (apiKey/basic/oauth2), `tags`, `parameters` (raiz), `responses` (raiz), paths com GET/POST/PUT/PATCH/DELETE, `in:body`, `in:formData`, `in:path/query/header`, `definitions`, `$ref`, `readOnly`, enums, formats, `additionalProperties`, `example`
 
@@ -339,9 +608,9 @@ Dois arquivos de referência foram criados modelando a mesma API (**Gestão de P
 
 ---
 
-## 6. Scripts Python
+## 7. Scripts Python
 
-### 6.1 `migrador_2to3.py` — OpenAPI 2.x → 3.x
+### 7.1 `migrador_2to3.py` — OpenAPI 2.x → 3.x
 
 ```bash
 python migrador_2to3.py entrada.yaml saida.yaml
@@ -365,7 +634,7 @@ python migrador_2to3.py entrada.yaml            # imprime na stdout
 - `type`/`format`/`enum` direto no parâmetro → dentro de `schema{}`
 - Todos os `$ref` atualizados: `#/definitions/` → `#/components/schemas/`, etc.
 
-### 6.2 `migrador_3to2.py` — OpenAPI 3.x → 2.x
+### 7.2 `migrador_3to2.py` — OpenAPI 3.x → 2.x
 
 ```bash
 python migrador_3to2.py entrada.yaml saida.yaml
@@ -394,7 +663,7 @@ python migrador_3to2.py entrada.yaml            # imprime na stdout
 - `in: cookie` → convertido para `in: header` com aviso
 - OAuth2 com múltiplos flows: apenas o primeiro flow é exportado
 
-### 6.3 `validador_openapi.py` — Validador de Sintaxe
+### 7.3 `validador_openapi.py` — Validador de Sintaxe
 
 ```bash
 python validador_openapi.py arquivo.yaml
@@ -428,27 +697,9 @@ python validador_openapi.py arquivo.yaml --sem-cor   # sem cores ANSI
 | Security schemes com tipos válidos | ✅ | ✅ |
 | Arrays com `items` definido | ✅ | ✅ |
 
-**Exemplo de saída:**
-
-```
-============================================================
- VALIDADOR OPENAPI — minha_api.yaml
-============================================================
-  ℹ️  Versão detectada: OpenAPI 3.0.3 (família 3.x)
-
-  AVISOS (1):
-  ⚠️  [tags] Tag 'beta' usada em operações mas não declarada na seção 'tags'.
-         💡 Declare todas as tags em 'tags' para melhor documentação.
-
-  RESUMO:
-    Erros   : 0
-    Avisos  : 1
-    Status  : ✅ VÁLIDO
-```
-
 ---
 
-## 7. Guia de Referência Rápida
+## 8. Guia de Referência Rápida
 
 | Aspecto | OpenAPI 2.0 | OpenAPI 3.x |
 |---|---|---|
@@ -478,7 +729,201 @@ python validador_openapi.py arquivo.yaml --sem-cor   # sem cores ANSI
 
 ---
 
-## 8. Conclusão
+## 9. Case: Engenharia Reversa no erwin DM — Do 2.0 ao 3.0
+
+### Contexto
+
+API de Gestão de Pedidos existente documentada em Swagger 2.0 (`openapi_2.0_example.yaml`). O objetivo era importar o modelo no erwin Data Modeler para documentar e evoluir a arquitetura de dados. O erwin DM suporta apenas OpenAPI 3.0 como DBMS alvo.
+
+---
+
+### Etapa 1 — Tentativa direta: importar o 2.0 no erwin
+
+O arquivo `openapi_2.0_example.yaml` foi importado diretamente no erwin DM via **Reverse Engineer → OpenAPI 3.0**.
+
+![Engenharia reversa do 2.0 — erros EMU-1003](erwin_images/erwinDM_OpenAPI%20(8).png)
+
+**Resultado observado:**
+
+O erwin concluiu a importação com status *"Completed"*, mas gerou **dezenas de erros EMU-1003** na janela de log:
+
+```
+EMU-1003: Property type 'JSON_Col_Array_Options' cannot be set on object type
+          'Attribute' for the target DBMS 'OpenAPI 3.0'
+EMU-1003: Property type 'JSON_Col_Format' cannot be set on object type
+          'Attribute' for the target DBMS 'OpenAPI 3.0'
+EMU-1003: Property type 'JSON_Object_Ref_Property' cannot be set on object type
+          'Attribute' for the target DBMS 'OpenAPI 3.0'
+... (repetido para cada atributo com type/format/enum direto no parâmetro)
+```
+
+**Modelo gerado — estrutura problemática:**
+
+| Nós raiz (colapsado) | Definitions expandido |
+|:---:|:---:|
+| ![2.0 colapsado](erwin_images/erwinDM_OpenAPI%20(7).png) | ![2.0 definitions](erwin_images/erwinDM_OpenAPI%20(6).png) |
+
+```
+openapi_2.0_example (+)
+├── components          ← estrutura criada, mas TODOS os nós filhos vazios
+│   ├── schemas         ← vazio
+│   ├── parameters      ← vazio
+│   ├── responses       ← vazio
+│   └── ...             ← vazio
+├── paths               ← único elemento correto: todas as rotas e verbos OK
+└── definitions         ← nó extra criado na raiz (não existe no padrão 3.0)
+    ├── Erro
+    ├── Endereco
+    ├── ItemPedido
+    ├── PedidoPatch
+    ├── PedidoCriacao
+    └── Pedido
+```
+
+**Diagnóstico:**
+
+| Problema | Causa |
+|---|---|
+| `components` vazio | erwin não promoveu `definitions` → `components/schemas` |
+| `definitions` como nó raiz | Chave 2.0 reconhecida, mas não convertida |
+| Schemas sem integração | `$ref: '#/definitions/X'` inválido no modelo 3.0 do erwin |
+| EMU-1003 em massa | `type`/`format` direto nos parâmetros — estrutura 2.0 incompatível |
+| `requestBody` ausente | `in: body` e `in: formData` não foram convertidos |
+| Segurança ignorada | `securityDefinitions` não mapeado para `components/securitySchemes` |
+
+**Conclusão da etapa:** importação parcialmente funcional apenas para os `paths`. O modelo estava inutilizável para documentação de dados.
+
+---
+
+### Etapa 2 — Conversão para 3.0 com o migrador
+
+```bash
+python migrator_2to3.py examples/openapi_2.0_example.yaml
+# → output_migrator/openapi_2.0_example_3.0.yaml
+```
+
+**O que o migrador executou:**
+
+| Transformação | Antes (2.0) | Depois (3.0) |
+|---|---|---|
+| Versão | `swagger: "2.0"` | `openapi: "3.0.3"` |
+| Servidor | `host` + `basePath` + `schemes` | `servers: [{url: https://api.exemplo.com/v1}]` |
+| Schemas | `definitions: {Pedido: ...}` | `components/schemas: {Pedido: ...}` |
+| $ref schemas | `$ref: '#/definitions/Pedido'` | `$ref: '#/components/schemas/Pedido'` |
+| Parâmetros globais | `parameters: {PedidoId: ...}` raiz | `components/parameters: {PedidoId: ...}` |
+| Respostas globais | `responses: {NotFound: ...}` raiz | `components/responses: {NotFound: ...}` |
+| Body da requisição | `{in: body, schema: $ref}` | `requestBody: {content: {application/json: {schema: $ref}}}` |
+| Upload de arquivo | `{in: formData, type: file}` | `requestBody multipart/form-data format: binary` |
+| Parâmetros query | `type: integer` (direto) | `schema: {type: integer}` (envolvido) |
+| Segurança Bearer | `type: apiKey, in: header` | `type: http, scheme: bearer` |
+| Segurança Basic | `type: basic` | `type: http, scheme: basic` |
+| OAuth2 flow | `flow: accessCode` | `flows: {authorizationCode: {...}}` |
+| Media types | `consumes`/`produces` globais | `content:` por operação |
+
+---
+
+### Etapa 3 — Validação do arquivo convertido
+
+```bash
+python validador_openapi.py output_migrator/openapi_2.0_example_3.0.yaml
+```
+
+**Saída esperada:**
+
+```
+============================================================
+ VALIDADOR OPENAPI — openapi_2.0_example_3.0.yaml
+============================================================
+  ℹ️  Versão detectada: OpenAPI 3.0.3 (família 3.x)
+
+  RESUMO:
+    Erros   : 0
+    Avisos  : 0
+    Status  : ✅ VÁLIDO
+```
+
+---
+
+### Etapa 4 — Reimportação do 3.0 no erwin DM
+
+O arquivo `openapi_2.0_example_3.0.yaml` foi importado no erwin via **Reverse Engineer → OpenAPI 3.0**.
+
+| Árvore 3.0 — schemas expandidos | Árvore 3.0 — components completo |
+|:---:|:---:|
+| ![3.0 schemas expandidos](erwin_images/erwinDM_OpenAPI%20(3).png) | ![3.0 components](erwin_images/erwinDM_OpenAPI%20(9).png) |
+
+**Resultado observado:**
+
+```
+openapi_2.0_example_3.0 (+)
+├── components
+│   ├── schemas          ← POPULADO
+│   │   ├── Pedido           (com todos os atributos: id, status, clienteId...)
+│   │   ├── PedidoCriacao    (com atributos e validações)
+│   │   ├── PedidoPatch
+│   │   ├── ItemPedido
+│   │   ├── Endereco
+│   │   └── Erro
+│   ├── parameters       ← com PedidoId, ClienteId, LimitQuery, OffsetQuery, XCorrelationId
+│   ├── responses        ← com NotFound, Unauthorized, BadRequest, InternalError
+│   ├── securitySchemes  ← com BearerAuth, BasicAuth, OAuth2
+│   ├── requestBodies    ← mapeado
+│   └── ...
+└── paths                ← idêntico — todas as rotas e verbos preservados
+    ├── /pedidos                      get / post
+    ├── /pedidos/{pedidoId}           get / put / patch / delete
+    ├── /pedidos/{pedidoId}/itens     get
+    ├── /clientes/{clienteId}/pedidos get
+    └── /produtos/upload              post
+```
+
+**Nenhum erro EMU-1003. Nenhum nó `definitions` extra. Modelo completo e navegável.**
+
+---
+
+### Comparativo Final: antes vs depois
+
+| Elemento | 2.0 direto no erwin | 3.0 convertido no erwin |
+|---|---|---|
+| `components/schemas` | Vazio | ✅ Populado (6 entidades) |
+| `components/parameters` | Vazio | ✅ Populado (5 parâmetros) |
+| `components/responses` | Vazio | ✅ Populado (4 respostas) |
+| `components/securitySchemes` | Vazio | ✅ Populado (3 esquemas) |
+| `definitions` (nó extra) | Presente (incorreto) | ✅ Inexistente |
+| `paths` | Preservado | ✅ Preservado (igual) |
+| Erros EMU-1003 | Dezenas | ✅ Nenhum |
+| `requestBody` nas operações | Ausente | ✅ Presente |
+| Modelo utilizável | ❌ Não | ✅ Sim |
+
+---
+
+### Lição aprendida
+
+O erwin DM interpreta qualquer arquivo OpenAPI através do seu modelo interno de **OpenAPI 3.0**. Estruturas do 2.0 não são convertidas automaticamente — são apenas mapeadas literalmente, resultando em:
+
+- Chaves 2.0 (`definitions`, `securityDefinitions`) criadas como nós isolados sem integração
+- `components` gerado como container vazio
+- `paths` preservados (a estrutura interna de paths é compatível entre as versões)
+
+A solução é invariavelmente converter para 3.0 antes de importar. O fluxo correto:
+
+```
+openapi_2.0_example.yaml
+          │
+          ▼ python migrator_2to3.py
+          │
+output_migrator/openapi_2.0_example_3.0.yaml
+          │
+          ▼ python validador_openapi.py  →  ✅ VÁLIDO
+          │
+          ▼ erwin DM — Reverse Engineer → OpenAPI 3.0
+          │
+Modelo completo: components populado, sem erros, sem nós extras
+```
+
+---
+
+## 10. Conclusão
 
 O OpenAPI 3.x representa uma evolução substancial em relação ao 2.0, com foco em maior expressividade, suporte a múltiplos ambientes, polimorfismo de schemas e organização centralizada de componentes. A migração de 2.0 para 3.x é recomendada para qualquer projeto que queira aproveitar ferramentas modernas de geração de código, documentação e engenharia reversa — incluindo o erwin DM.
 

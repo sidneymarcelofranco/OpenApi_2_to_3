@@ -31,6 +31,8 @@ Cobertura de migração:
   ✅ apiKey + basic → http / apiKey
   ✅ response schema + headers mantidos
   ✅ operationId, tags, summary, description, externalDocs mantidos
+  ✅ servers com description (Produção / Desenvolvimento por scheme)
+  ✅ sem YAML anchors (&id/*id) — cada content type recebe cópia independente do schema
 """
 
 import sys
@@ -188,9 +190,9 @@ def build_request_body(
         for mime in consumes:
             entry: Dict = {}
             if schema:
-                entry['schema'] = schema
+                entry['schema'] = deep_copy(schema)
             if 'examples' in param:
-                entry['examples'] = param['examples']
+                entry['examples'] = deep_copy(param['examples'])
             content[mime] = entry
 
         rb: Dict = {'required': required, 'content': content}
@@ -273,7 +275,7 @@ def convert_response(resp: Dict, global_produces: list) -> Dict:
         produces = global_produces or ['application/json']
         content: Dict = {}
         for mime in produces:
-            entry: Dict = {'schema': schema}
+            entry: Dict = {'schema': deep_copy(schema)}
             if 'examples' in resp:
                 ex_val = resp['examples'].get(mime)
                 if ex_val is not None:
@@ -359,10 +361,14 @@ def migrate_2_to_3(spec_2: Dict) -> Dict:
     host     = spec_2.get('host', 'localhost')
     base     = spec_2.get('basePath', '/')
     schemes  = spec_2.get('schemes', ['https'])
+    scheme_desc = {'https': 'Produção', 'http': 'Desenvolvimento'}
     servers  = []
     for scheme in schemes:
         url = f"{scheme}://{host}{base}"
-        servers.append({'url': url.rstrip('/')})
+        entry: Dict = {'url': url.rstrip('/')}
+        if scheme in scheme_desc:
+            entry['description'] = scheme_desc[scheme]
+        servers.append(entry)
     out['servers'] = servers
 
     # ── tags ──────────────────────────────────────────────────────────────
