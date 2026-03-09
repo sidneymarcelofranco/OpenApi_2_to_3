@@ -20,6 +20,10 @@
 5. [Principais Mudanças entre 2.0 e 3.x](#5-principais-mudanças-entre-20-e-3x)
 6. [Exemplos YAML](#6-exemplos-yaml)
 7. [Scripts Python](#7-scripts-python)
+   - 7.1 [`migrador_2to3.py`](#71-migrador_2to3py--openapi-2x--3x)
+   - 7.2 [`migrador_3to2.py`](#72-migrador_3to2py--openapi-3x--2x)
+   - 7.3 [Análise de Cobertura: o que é possível inferir do 2.0](#73-análise-de-cobertura-o-que-é-possível-inferir-do-20)
+   - 7.4 [`validador_openapi.py`](#74-validador_openapipy--validador-de-sintaxe)
 8. [Guia de Referência Rápida](#8-guia-de-referência-rápida)
 9. [Case: Engenharia Reversa no erwin DM — Do 2.0 ao 3.0](#9-case-engenharia-reversa-no-erwin-dm--do-20-ao-30)
 10. [Conclusão](#10-conclusão)
@@ -614,25 +618,41 @@ Dois arquivos de referência foram criados modelando a mesma API (**Gestão de P
 
 ```bash
 python migrador_2to3.py entrada.yaml saida.yaml
-python migrador_2to3.py entrada.yaml            # imprime na stdout
+python migrador_2to3.py entrada.yaml            # salva em output_migrator/
 ```
 
-**Cobertura de migração:**
-- `swagger` → `openapi: "3.0.3"`
-- `host` + `basePath` + `schemes` → `servers[]`
-- `consumes`/`produces` → `requestBody.content` e `responses.content`
-- `securityDefinitions` → `components/securitySchemes`
-  - `type: basic` → `type: http, scheme: basic`
-  - `type: apiKey` (Authorization header) → `type: http, scheme: bearer`
-  - `oauth2 flow: accessCode` → `flows.authorizationCode`
-  - `oauth2 flow: application` → `flows.clientCredentials`
-- `definitions` → `components/schemas`
-- `parameters` (raiz) → `components/parameters`
-- `responses` (raiz) → `components/responses`
-- `in: body` → `requestBody`
-- `in: formData` com `type: file` → `requestBody multipart/form-data` com `format: binary`
-- `type`/`format`/`enum` direto no parâmetro → dentro de `schema{}`
-- Todos os `$ref` atualizados: `#/definitions/` → `#/components/schemas/`, etc.
+**Cobertura de migração — o que é convertido automaticamente:**
+
+| Elemento 2.0 | Resultado em 3.0 | Observação |
+|---|---|---|
+| `swagger: "2.0"` | `openapi: "3.0.3"` | |
+| `host` + `basePath` + `schemes` | `servers[].url` + `description` | https → "Produção", http → "Desenvolvimento" |
+| `consumes` (global/operação) | `requestBody.content.<mime>` | Aplicado por operação |
+| `produces` (global/operação) | `responses.<code>.content.<mime>` | Aplicado por operação |
+| `definitions.*` | `components/schemas.*` | $ref atualizados automaticamente |
+| `parameters.*` (raiz) | `components/parameters.*` | $ref atualizados automaticamente |
+| `responses.*` (raiz) | `components/responses.*` | $ref atualizados automaticamente |
+| `securityDefinitions.*` | `components/securitySchemes.*` | Ver conversões abaixo |
+| `type: basic` | `type: http, scheme: basic` | |
+| `type: apiKey` (header Authorization) | `type: http, scheme: bearer, bearerFormat: JWT` | Detecta pelo nome do header |
+| `type: apiKey` (outros) | `type: apiKey` | Mantido igual |
+| `oauth2, flow: accessCode` | `flows.authorizationCode` | |
+| `oauth2, flow: implicit` | `flows.implicit` | |
+| `oauth2, flow: password` | `flows.password` | |
+| `oauth2, flow: application` | `flows.clientCredentials` | |
+| `in: body` | `requestBody` com `content.<mime>.schema` | |
+| `in: formData, type: file` | `requestBody multipart/form-data, format: binary` | |
+| `in: formData` (campo) | `requestBody multipart/form-data, schema.properties` | |
+| `type`/`format`/`enum` direto no param | `schema: {type, format, enum}` | Estrutura 3.0 |
+| `#/definitions/X` | `#/components/schemas/X` | Recursivo em toda a estrutura |
+| `#/parameters/X` | `#/components/parameters/X` | |
+| `#/responses/X` | `#/components/responses/X` | |
+| `headers` em respostas | `headers.<name>.schema` | type/format movidos para schema |
+| `operationId`, `tags`, `summary`, `description`, `externalDocs`, `security`, `deprecated` | Mantidos idênticos | |
+
+**Correção aplicada (v1.1):**
+
+> **Bug YAML Anchors** — versões anteriores geravam `&id001`/`*id001` ao expandir `produces` com múltiplos content types. Corrigido: cada media type recebe uma cópia independente do schema (`deep_copy`), sem anchors YAML no output.
 
 ### 7.2 `migrador_3to2.py` — OpenAPI 3.x → 2.x
 
@@ -663,7 +683,72 @@ python migrador_3to2.py entrada.yaml            # imprime na stdout
 - `in: cookie` → convertido para `in: header` com aviso
 - OAuth2 com múltiplos flows: apenas o primeiro flow é exportado
 
-### 7.3 `validador_openapi.py` — Validador de Sintaxe
+### 7.3 Análise de Cobertura: o que é possível inferir do 2.0
+
+A migração automática tem um teto definido pelo que o formato 2.0 **registra explicitamente**. Abaixo a análise completa de cada funcionalidade 3.0 e se ela pode ser gerada a partir de um arquivo 2.0:
+
+**Legenda:**
+- ✅ `MIGRADO` — convertido automaticamente pelo script
+- 🟡 `PARCIAL` — convertido com perda ou aproximação
+- 🔴 `INFERÍVEL` — não existe no 2.0, mas pode ser deduzido com heurística
+- ❌ `IMPOSSÍVEL` — não há como obter essa informação a partir do 2.0
+
+| Funcionalidade 3.0 | Status | Por quê |
+|---|---|---|
+| `openapi` versão | ✅ MIGRADO | Valor fixo `3.0.3` |
+| `info.*` (título, versão, contato, licença) | ✅ MIGRADO | Estrutura idêntica |
+| `servers[].url` | ✅ MIGRADO | Montado de `host + basePath + scheme` |
+| `servers[].description` | 🔴 INFERÍVEL | Heurística por scheme: https → "Produção", http → "Desenvolvimento" ✅ implementado |
+| `servers[].variables` | ❌ IMPOSSÍVEL | Não existe no 2.0 |
+| Servidor sandbox / localhost | ❌ IMPOSSÍVEL | O 2.0 só tem um `host`; URLs adicionais não têm fonte |
+| `tags.*` | ✅ MIGRADO | Estrutura idêntica |
+| `security` (global) | ✅ MIGRADO | Estrutura idêntica |
+| `paths.*` (estrutura) | ✅ MIGRADO | Estrutura interna compatível |
+| `requestBody` (de `in: body`) | ✅ MIGRADO | Conversão direta |
+| `requestBody` (de `in: formData`) | ✅ MIGRADO | Conversão para multipart |
+| `requestBody.description` | ✅ MIGRADO | Vem do campo `description` do parâmetro body |
+| `requestBody` reutilizável em `components` | ❌ IMPOSSÍVEL | 2.0 não tem `requestBodies` como componente |
+| `responses.content.<mime>.schema` | ✅ MIGRADO | Expandido a partir de `produces` |
+| `responses.content.<mime>.examples` | 🟡 PARCIAL | `example` inline migrado; named `examples` não existem no 2.0 |
+| `components/schemas` | ✅ MIGRADO | De `definitions` |
+| `components/parameters` | ✅ MIGRADO | De `parameters` raiz |
+| `components/responses` | ✅ MIGRADO | De `responses` raiz |
+| `components/securitySchemes` | ✅ MIGRADO | De `securityDefinitions` |
+| `components/requestBodies` | ❌ IMPOSSÍVEL | Conceito não existe no 2.0 |
+| `components/headers` | ❌ IMPOSSÍVEL | Headers de resposta existem no 2.0, mas não como componente reutilizável |
+| `components/links` | ❌ IMPOSSÍVEL | Conceito não existe no 2.0 |
+| `components/examples` | ❌ IMPOSSÍVEL | Named examples não existem no 2.0 |
+| `components/callbacks` | ❌ IMPOSSÍVEL | Conceito não existe no 2.0 |
+| `parameters.schema{}` (envoltório) | ✅ MIGRADO | `type/format/enum` movidos para `schema:` |
+| `parameters.style` / `explode` | 🟡 PARCIAL | `collectionFormat` do 2.0 tem equivalente aproximado, não implementado |
+| `parameters` `in: cookie` | ❌ IMPOSSÍVEL | Não existe no 2.0 (convertido de header se necessário) |
+| `nullable: true` | ❌ IMPOSSÍVEL | Não existe no 2.0 |
+| `writeOnly` | ❌ IMPOSSÍVEL | Não existe no 2.0 |
+| `oneOf` / `anyOf` / `not` | ❌ IMPOSSÍVEL | Não existem no 2.0 |
+| `discriminator` | ❌ IMPOSSÍVEL | Não existe no 2.0 |
+| `allOf` | ✅ MIGRADO | Existe no 2.0, preservado |
+| `readOnly` | ✅ MIGRADO | Existe no 2.0, preservado |
+| `externalDocs` | ✅ MIGRADO | Estrutura idêntica |
+| Bearer JWT (de `apiKey` Authorization) | ✅ MIGRADO | Heurística pelo nome do header ✅ implementado |
+| OAuth2 múltiplos flows | ❌ IMPOSSÍVEL | 2.0 suporta apenas 1 flow por scheme |
+| `openIdConnect` security type | ❌ IMPOSSÍVEL | Não existe no 2.0 |
+| Named `examples` em requestBody | ❌ IMPOSSÍVEL | 2.0 só tem `example` inline |
+| `callbacks` em operações | ❌ IMPOSSÍVEL | Não existe no 2.0 |
+| `servers` por operação (override) | ❌ IMPOSSÍVEL | Não existe no 2.0 |
+| YAML sem anchors (`&id`/`*id`) | ✅ CORRIGIDO | Bug resolvido com `deep_copy` por content type |
+
+**Resumo quantitativo:**
+
+| Status | Quantidade |
+|---|---|
+| ✅ MIGRADO (automático e completo) | 24 |
+| 🟡 PARCIAL (com perda aceitável) | 2 |
+| 🔴 INFERÍVEL (heurística implementada) | 2 |
+| ❌ IMPOSSÍVEL (limitação estrutural do 2.0) | 15 |
+
+> As 15 funcionalidades impossíveis são **exclusivas do OpenAPI 3.0** e não têm representação no formato 2.0. Nenhum migrador automático pode gerá-las a partir de um arquivo 2.0, pois a informação simplesmente não existe na fonte.
+
+### 7.4 `validador_openapi.py` — Validador de Sintaxe
 
 ```bash
 python validador_openapi.py arquivo.yaml
@@ -696,6 +781,84 @@ python validador_openapi.py arquivo.yaml --sem-cor   # sem cores ANSI
 | Formatos conhecidos (`int32`, `date-time`, `uuid`...) | ✅ | ✅ |
 | Security schemes com tipos válidos | ✅ | ✅ |
 | Arrays com `items` definido | ✅ | ✅ |
+
+---
+
+### 7.5 Simulação de `examples` — o que o migrador consegue fazer
+
+> **Contexto:** `components/examples` (named examples reutilizáveis) é exclusivo do OpenAPI 3.0.
+> Para verificar o comportamento real do migrador, foi criado o arquivo
+> [`examples/openapi_2.0_sim_examples.yaml`](examples/openapi_2.0_sim_examples.yaml)
+> cobrindo 5 cenários distintos de uso de `example`/`examples` no 2.0.
+
+#### Arquivo de simulação
+
+```bash
+python migrator_2to3.py examples/openapi_2.0_sim_examples.yaml
+# → output_migrator/openapi_2.0_sim_examples_3.0.yaml
+```
+
+#### Resultados por cenário
+
+| # | Cenário | Sintaxe 2.0 | Resultado 3.0 | Status |
+|---|---------|-------------|---------------|--------|
+| A | `example` inline em **propriedade** de schema | `properties.id.example: 1001` | Preservado identicamente | ✅ MIGRADO |
+| B | `example` no **nível do schema** (object-level) | `Pedido.example: {id: 1001, ...}` | Preservado identicamente | ✅ MIGRADO |
+| C | `example` inline em **parâmetro** | `param.example: 1001` (raiz do param) | Movido para `schema.example` | ✅ MIGRADO |
+| D | `examples` na **resposta** (por mime type, 2.0) | `response.examples.application/json: {...}` | Convertido para `content.application/json.examples.default.value` | ✅ MIGRADO |
+| E | `x-examples` em parâmetro body (extensão) | `param.x-examples: {PedidoCompleto: {value:...}}` | **Descartado silenciosamente** | ❌ PERDIDO |
+
+#### Saída gerada — Cenário D (mais interessante)
+
+O migrador já converte automaticamente o `examples` de resposta do 2.0 (chaveado por mime type)
+para o formato 3.0 dentro de `content`:
+
+```yaml
+# 2.0 — examples no nível da resposta, chaveado por mime type
+responses:
+  200:
+    examples:
+      application/json:
+        id: 1001
+        status: pendente
+        total: 204.90
+```
+
+```yaml
+# 3.0 — examples dentro de content[mime].examples, com chave nomeada
+responses:
+  '200':
+    content:
+      application/json:
+        examples:
+          default:            # ← nome gerado pelo migrador
+            value:
+              id: 1001
+              status: pendente
+              total: 204.9
+```
+
+#### Cenário E — por que `x-examples` é perdido
+
+`x-examples` é uma **extensão informal** (não padrão 2.0) usada por algumas ferramentas como
+Stoplight para simular named examples em 2.0. O migrador extrai do parâmetro `in: body` apenas
+os campos `schema`, `examples` (padrão 2.0) e `description`. Extensões `x-*` nos parâmetros
+body são ignoradas durante a construção do `requestBody`.
+
+#### Conclusão
+
+| Tipo de example | Suportado no 2.0? | Migrado para 3.0? |
+|-----------------|-------------------|-------------------|
+| `example` inline em propriedades de schema | ✅ sim | ✅ sim |
+| `example` no nível do schema | ✅ sim | ✅ sim |
+| `example` em parâmetros query/path/header | ✅ sim | ✅ sim (dentro de `schema`) |
+| `examples` em resposta (por mime type) | ✅ sim | ✅ sim (convertido para `content[mime].examples.default`) |
+| `x-examples` (extensão informal) | ⚠️ extensão | ❌ não (descartado) |
+| Named examples em `components/examples` | ❌ não existe no 2.0 | ❌ impossível |
+
+> **Resumo:** Tudo que é `example` **padrão 2.0** é migrado corretamente.
+> O único gap real é `components/examples` com named examples reutilizáveis — que é
+> uma funcionalidade exclusiva do 3.0 sem equivalente no 2.0.
 
 ---
 
