@@ -1,0 +1,670 @@
+openapi: "3.0.3"
+info:
+  title: API de Gestão de Pedidos
+  description: |
+    API completa para gerenciamento de pedidos, clientes e produtos.
+    Exemplo que cobre a maior parte dos atributos comuns do OpenAPI 3.0.
+    Equivalente ao arquivo openapi_2.0_example.yaml, convertido para 3.0.
+  version: "1.0.0"
+  termsOfService: "https://exemplo.com/termos"
+  contact:
+    name: Equipe de Desenvolvimento
+    email: dev@exemplo.com
+    url: "https://exemplo.com/suporte"
+  license:
+    name: Apache 2.0
+    url: "https://www.apache.org/licenses/LICENSE-2.0"
+
+# ─── Servidores (substitui host + basePath + schemes do 2.0) ───────────────
+servers:
+  - url: "https://api.exemplo.com/v1"
+    description: Produção
+  - url: "https://sandbox.exemplo.com/v1"
+    description: Sandbox / Homologação
+  - url: "http://localhost:8080/v1"
+    description: Desenvolvimento local
+
+# ─── Tags ──────────────────────────────────────────────────────────────────
+tags:
+  - name: pedidos
+    description: Operações relacionadas a pedidos
+    externalDocs:
+      description: Documentação adicional
+      url: "https://docs.exemplo.com/pedidos"
+  - name: clientes
+    description: Gerenciamento de clientes
+  - name: produtos
+    description: Catálogo de produtos
+
+# ─── Segurança Global ───────────────────────────────────────────────────────
+security:
+  - BearerAuth: []
+
+# ─── Paths (Endpoints) ─────────────────────────────────────────────────────
+paths:
+
+  /pedidos:
+    get:
+      tags: [pedidos]
+      summary: Listar pedidos
+      description: Retorna lista paginada de pedidos com filtros opcionais.
+      operationId: listarPedidos
+      parameters:
+        - $ref: '#/components/parameters/LimitQuery'
+        - $ref: '#/components/parameters/OffsetQuery'
+        - $ref: '#/components/parameters/XCorrelationId'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pendente, processando, enviado, entregue, cancelado]
+          description: Filtrar por status do pedido
+        - name: dataInicio
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "Data início do filtro (formato: YYYY-MM-DD)"
+        - name: dataFim
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "Data fim do filtro (formato: YYYY-MM-DD)"
+      responses:
+        "200":
+          description: Lista de pedidos retornada com sucesso
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+              description: Total de registros disponíveis
+            X-Page-Size:
+              schema:
+                type: integer
+              description: Tamanho da página
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                    example: 150
+                  itens:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Pedido'
+              examples:
+                ExemploLista:
+                  summary: Lista com um pedido
+                  value:
+                    total: 1
+                    itens:
+                      - id: 1001
+                        status: pendente
+                        clienteId: 42
+                        total: 204.90
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - OAuth2: [read:pedidos]
+
+    post:
+      tags: [pedidos]
+      summary: Criar pedido
+      description: Cria um novo pedido no sistema.
+      operationId: criarPedido
+      # Em 3.0 não existe consumes/produces - usa requestBody e content
+      requestBody:
+        required: true
+        description: Dados do pedido a ser criado
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PedidoCriacao'
+            examples:
+              ExemploCriacao:
+                summary: Pedido simples
+                value:
+                  clienteId: 42
+                  itens:
+                    - produtoId: 555
+                      quantidade: 2
+      responses:
+        "201":
+          description: Pedido criado com sucesso
+          headers:
+            Location:
+              schema:
+                type: string
+              description: URL do pedido criado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security:
+        - OAuth2: [write:pedidos]
+
+  /pedidos/{pedidoId}:
+    parameters:
+      - $ref: '#/components/parameters/PedidoId'
+      - $ref: '#/components/parameters/XCorrelationId'
+
+    get:
+      tags: [pedidos]
+      summary: Buscar pedido por ID
+      description: Retorna detalhes completos de um pedido específico.
+      operationId: buscarPedido
+      responses:
+        "200":
+          description: Pedido encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [pedidos]
+      summary: Atualizar pedido completo
+      description: Substitui completamente os dados de um pedido.
+      operationId: atualizarPedido
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PedidoCriacao'
+      responses:
+        "200":
+          description: Pedido atualizado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [pedidos]
+      summary: Atualizar parcialmente um pedido
+      description: Atualiza campos específicos de um pedido.
+      operationId: atualizarParcialPedido
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PedidoPatch'
+      responses:
+        "200":
+          description: Pedido atualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pedido'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [pedidos]
+      summary: Cancelar pedido
+      description: Cancela um pedido (não exclui fisicamente).
+      operationId: cancelarPedido
+      responses:
+        "204":
+          description: Pedido cancelado com sucesso
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /pedidos/{pedidoId}/itens:
+    get:
+      tags: [pedidos]
+      summary: Listar itens do pedido
+      operationId: listarItensPedido
+      parameters:
+        - $ref: '#/components/parameters/PedidoId'
+      responses:
+        "200":
+          description: Itens do pedido
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ItemPedido'
+
+  /clientes/{clienteId}/pedidos:
+    get:
+      tags: [clientes, pedidos]
+      summary: Listar pedidos do cliente
+      operationId: listarPedidosCliente
+      parameters:
+        - $ref: '#/components/parameters/ClienteId'
+        - $ref: '#/components/parameters/LimitQuery'
+        - $ref: '#/components/parameters/OffsetQuery'
+      responses:
+        "200":
+          description: Pedidos do cliente
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pedido'
+
+  /produtos/upload:
+    post:
+      tags: [produtos]
+      summary: Upload de imagem do produto
+      description: Faz upload de uma imagem para o produto. Em 3.0 usa requestBody com multipart/form-data.
+      operationId: uploadImagemProduto
+      # Em 3.0 não existe 'in: formData' - usa requestBody com multipart/form-data
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - arquivo
+              properties:
+                arquivo:
+                  type: string
+                  format: binary       # substitui 'type: file' do 2.0
+                  description: Arquivo de imagem (JPEG ou PNG)
+                descricao:
+                  type: string
+                  description: Descrição da imagem
+      responses:
+        "200":
+          description: Upload realizado com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                    example: "https://cdn.exemplo.com/produtos/img123.jpg"
+
+# ─── Components (substitui definições de nível raiz do 2.0) ────────────────
+components:
+
+  # ─── Schemas (equivalente a 'definitions' do 2.0) ─────────────────────
+  schemas:
+
+    Pedido:
+      type: object
+      required:
+        - id
+        - status
+        - clienteId
+        - itens
+        - total
+        - criadoEm
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+          example: 1001
+          description: Identificador único do pedido
+        status:
+          type: string
+          enum: [pendente, processando, enviado, entregue, cancelado]
+          example: pendente
+        clienteId:
+          type: integer
+          format: int64
+          example: 42
+        enderecoEntrega:
+          $ref: '#/components/schemas/Endereco'
+        itens:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ItemPedido'
+        subtotal:
+          type: number
+          format: double
+          example: 199.90
+        desconto:
+          type: number
+          format: double
+          example: 10.00
+          default: 0
+        frete:
+          type: number
+          format: double
+          example: 15.00
+        total:
+          type: number
+          format: double
+          example: 204.90
+        observacoes:
+          type: string
+          maxLength: 500
+          example: "Entregar no período da tarde"
+        criadoEm:
+          type: string
+          format: date-time
+          readOnly: true
+          example: "2024-01-15T10:30:00Z"
+        atualizadoEm:
+          type: string
+          format: date-time
+          readOnly: true
+          example: "2024-01-15T14:00:00Z"
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            origem: "app-mobile"
+            campanha: "black-friday"
+
+    PedidoCriacao:
+      type: object
+      required:
+        - clienteId
+        - itens
+      properties:
+        clienteId:
+          type: integer
+          format: int64
+          example: 42
+        enderecoEntregaId:
+          type: integer
+          format: int64
+          example: 7
+        itens:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - produtoId
+              - quantidade
+            properties:
+              produtoId:
+                type: integer
+                format: int64
+                example: 555
+              quantidade:
+                type: integer
+                minimum: 1
+                example: 2
+        cupomDesconto:
+          type: string
+          pattern: '^[A-Z0-9]{6,12}$'
+          example: "PROMO10"
+        observacoes:
+          type: string
+          maxLength: 500
+
+    PedidoPatch:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [processando, enviado, entregue, cancelado]
+        observacoes:
+          type: string
+          maxLength: 500
+
+    ItemPedido:
+      type: object
+      required:
+        - produtoId
+        - quantidade
+        - precoUnitario
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+        produtoId:
+          type: integer
+          format: int64
+          example: 555
+        nomeProduto:
+          type: string
+          example: "Camiseta Polo"
+        quantidade:
+          type: integer
+          minimum: 1
+          example: 2
+        precoUnitario:
+          type: number
+          format: double
+          example: 99.95
+        subtotal:
+          type: number
+          format: double
+          readOnly: true
+          example: 199.90
+
+    Endereco:
+      type: object
+      required:
+        - logradouro
+        - numero
+        - cidade
+        - estado
+        - cep
+        - pais
+      properties:
+        logradouro:
+          type: string
+          example: "Rua das Flores"
+        numero:
+          type: string
+          example: "123"
+        complemento:
+          type: string
+          example: "Apto 42"
+        bairro:
+          type: string
+          example: "Centro"
+        cidade:
+          type: string
+          example: "São Paulo"
+        estado:
+          type: string
+          minLength: 2
+          maxLength: 2
+          example: "SP"
+        cep:
+          type: string
+          pattern: '^\d{5}-?\d{3}$'
+          example: "01001-000"
+        pais:
+          type: string
+          default: "BR"
+          example: "BR"
+
+    Erro:
+      type: object
+      required:
+        - codigo
+        - mensagem
+      properties:
+        codigo:
+          type: string
+          example: "PEDIDO_NAO_ENCONTRADO"
+        mensagem:
+          type: string
+          example: "O pedido solicitado não foi encontrado"
+        detalhes:
+          type: array
+          items:
+            type: object
+            properties:
+              campo:
+                type: string
+                example: "clienteId"
+              descricao:
+                type: string
+                example: "Campo obrigatório"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00Z"
+        traceId:
+          type: string
+          example: "abc-123-def-456"
+
+  # ─── Parameters (equivalente a 'parameters' raiz do 2.0) ──────────────
+  parameters:
+    PedidoId:
+      name: pedidoId
+      in: path
+      required: true
+      schema:                   # Em 3.0: type/format ficam dentro de 'schema'
+        type: integer
+        format: int64
+      description: Identificador único do pedido
+
+    ClienteId:
+      name: clienteId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Identificador único do cliente
+
+    LimitQuery:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        default: 20
+        minimum: 1
+        maximum: 100
+      description: Número máximo de registros retornados
+
+    OffsetQuery:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        format: int32
+        default: 0
+      description: Deslocamento para paginação
+
+    XCorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema:
+        type: string
+      description: ID de rastreamento da requisição
+
+  # ─── Responses (equivalente a 'responses' raiz do 2.0) ────────────────
+  responses:
+    NotFound:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+
+    Unauthorized:
+      description: Não autorizado
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+          description: Esquema de autenticação requerido
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+
+    BadRequest:
+      description: Requisição inválida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+
+    InternalError:
+      description: Erro interno do servidor
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+
+  # ─── Security Schemes (equivalente a 'securityDefinitions' do 2.0) ────
+  securitySchemes:
+    BearerAuth:
+      type: http              # Em 3.0: type 'http' com scheme 'bearer' (antes era 'apiKey')
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Token JWT. Formato: Bearer {token}"
+    BasicAuth:
+      type: http
+      scheme: basic
+    OAuth2:
+      type: oauth2
+      flows:                  # Em 3.0: 'flows' (plural) substitui 'flow' singular
+        authorizationCode:    # Em 3.0: 'authorizationCode' substitui 'accessCode'
+          authorizationUrl: "https://auth.exemplo.com/oauth/authorize"
+          tokenUrl: "https://auth.exemplo.com/oauth/token"
+          scopes:
+            read:pedidos: Leitura de pedidos
+            write:pedidos: Criação e edição de pedidos
+            admin: Acesso administrativo
+
+  # ─── Links (NOVO em 3.0 - não existe no 2.0) ──────────────────────────
+  links:
+    PedidoCriado:
+      operationId: buscarPedido
+      parameters:
+        pedidoId: '$response.body#/id'
+      description: Link para buscar o pedido recém-criado
+
+  # ─── Examples (NOVO como componente reutilizável em 3.0) ──────────────
+  examples:
+    PedidoCompleto:
+      summary: Exemplo de pedido completo
+      value:
+        id: 1001
+        status: pendente
+        clienteId: 42
+        total: 204.90
+        criadoEm: "2024-01-15T10:30:00Z"
+
+# ─── Documentação Externa ──────────────────────────────────────────────────
+externalDocs:
+  description: Documentação completa da API
+  url: "https://docs.exemplo.com"

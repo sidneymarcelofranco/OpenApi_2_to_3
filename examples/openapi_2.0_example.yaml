@@ -1,0 +1,609 @@
+swagger: "2.0"
+info:
+  title: API de Gestão de Pedidos
+  description: |
+    API completa para gerenciamento de pedidos, clientes e produtos.
+    Exemplo que cobre a maior parte dos atributos comuns do OpenAPI 2.0 (Swagger).
+  version: "1.0.0"
+  termsOfService: "https://exemplo.com/termos"
+  contact:
+    name: Equipe de Desenvolvimento
+    email: dev@exemplo.com
+    url: "https://exemplo.com/suporte"
+  license:
+    name: Apache 2.0
+    url: "https://www.apache.org/licenses/LICENSE-2.0"
+
+host: api.exemplo.com
+basePath: /v1
+schemes:
+  - https
+  - http
+
+consumes:
+  - application/json
+  - application/xml
+
+produces:
+  - application/json
+  - application/xml
+
+# ─── Segurança Global ───────────────────────────────────────────────────────
+security:
+  - BearerAuth: []
+
+securityDefinitions:
+  BearerAuth:
+    type: apiKey
+    in: header
+    name: Authorization
+    description: "Token JWT. Formato: Bearer {token}"
+  BasicAuth:
+    type: basic
+  OAuth2:
+    type: oauth2
+    flow: accessCode
+    authorizationUrl: "https://auth.exemplo.com/oauth/authorize"
+    tokenUrl: "https://auth.exemplo.com/oauth/token"
+    scopes:
+      read:pedidos: Leitura de pedidos
+      write:pedidos: Criação e edição de pedidos
+      admin: Acesso administrativo
+
+# ─── Tags ──────────────────────────────────────────────────────────────────
+tags:
+  - name: pedidos
+    description: Operações relacionadas a pedidos
+    externalDocs:
+      description: Documentação adicional
+      url: "https://docs.exemplo.com/pedidos"
+  - name: clientes
+    description: Gerenciamento de clientes
+  - name: produtos
+    description: Catálogo de produtos
+
+# ─── Parâmetros Globais Reutilizáveis ──────────────────────────────────────
+parameters:
+  PedidoId:
+    name: pedidoId
+    in: path
+    required: true
+    type: integer
+    format: int64
+    description: Identificador único do pedido
+  ClienteId:
+    name: clienteId
+    in: path
+    required: true
+    type: integer
+    format: int64
+    description: Identificador único do cliente
+  LimitQuery:
+    name: limit
+    in: query
+    required: false
+    type: integer
+    format: int32
+    default: 20
+    minimum: 1
+    maximum: 100
+    description: Número máximo de registros retornados
+  OffsetQuery:
+    name: offset
+    in: query
+    required: false
+    type: integer
+    format: int32
+    default: 0
+    description: Deslocamento para paginação
+  XCorrelationId:
+    name: X-Correlation-ID
+    in: header
+    required: false
+    type: string
+    description: ID de rastreamento da requisição
+
+# ─── Respostas Globais Reutilizáveis ───────────────────────────────────────
+responses:
+  NotFound:
+    description: Recurso não encontrado
+    schema:
+      $ref: '#/definitions/Erro'
+  Unauthorized:
+    description: Não autorizado
+    headers:
+      WWW-Authenticate:
+        type: string
+        description: Esquema de autenticação requerido
+    schema:
+      $ref: '#/definitions/Erro'
+  BadRequest:
+    description: Requisição inválida
+    schema:
+      $ref: '#/definitions/Erro'
+  InternalError:
+    description: Erro interno do servidor
+    schema:
+      $ref: '#/definitions/Erro'
+
+# ─── Paths (Endpoints) ─────────────────────────────────────────────────────
+paths:
+
+  /pedidos:
+    get:
+      tags: [pedidos]
+      summary: Listar pedidos
+      description: Retorna lista paginada de pedidos com filtros opcionais.
+      operationId: listarPedidos
+      produces:
+        - application/json
+      parameters:
+        - $ref: '#/parameters/LimitQuery'
+        - $ref: '#/parameters/OffsetQuery'
+        - $ref: '#/parameters/XCorrelationId'
+        - name: status
+          in: query
+          required: false
+          type: string
+          enum: [pendente, processando, enviado, entregue, cancelado]
+          description: Filtrar por status do pedido
+        - name: dataInicio
+          in: query
+          required: false
+          type: string
+          format: date
+          description: "Data início do filtro (formato: YYYY-MM-DD)"
+        - name: dataFim
+          in: query
+          required: false
+          type: string
+          format: date
+          description: "Data fim do filtro (formato: YYYY-MM-DD)"
+      responses:
+        200:
+          description: Lista de pedidos retornada com sucesso
+          headers:
+            X-Total-Count:
+              type: integer
+              description: Total de registros disponíveis
+            X-Page-Size:
+              type: integer
+              description: Tamanho da página
+          schema:
+            type: object
+            properties:
+              total:
+                type: integer
+                example: 150
+              itens:
+                type: array
+                items:
+                  $ref: '#/definitions/Pedido'
+        400:
+          $ref: '#/responses/BadRequest'
+        401:
+          $ref: '#/responses/Unauthorized'
+        500:
+          $ref: '#/responses/InternalError'
+      security:
+        - BearerAuth: []
+        - OAuth2: [read:pedidos]
+
+    post:
+      tags: [pedidos]
+      summary: Criar pedido
+      description: Cria um novo pedido no sistema.
+      operationId: criarPedido
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      parameters:
+        - name: body
+          in: body
+          required: true
+          description: Dados do pedido a ser criado
+          schema:
+            $ref: '#/definitions/PedidoCriacao'
+      responses:
+        201:
+          description: Pedido criado com sucesso
+          headers:
+            Location:
+              type: string
+              description: URL do pedido criado
+          schema:
+            $ref: '#/definitions/Pedido'
+        400:
+          $ref: '#/responses/BadRequest'
+        401:
+          $ref: '#/responses/Unauthorized'
+        500:
+          $ref: '#/responses/InternalError'
+      security:
+        - OAuth2: [write:pedidos]
+
+  /pedidos/{pedidoId}:
+    parameters:
+      - $ref: '#/parameters/PedidoId'
+      - $ref: '#/parameters/XCorrelationId'
+
+    get:
+      tags: [pedidos]
+      summary: Buscar pedido por ID
+      description: Retorna detalhes completos de um pedido específico.
+      operationId: buscarPedido
+      produces:
+        - application/json
+      responses:
+        200:
+          description: Pedido encontrado
+          schema:
+            $ref: '#/definitions/Pedido'
+        404:
+          $ref: '#/responses/NotFound'
+        401:
+          $ref: '#/responses/Unauthorized'
+
+    put:
+      tags: [pedidos]
+      summary: Atualizar pedido completo
+      description: Substitui completamente os dados de um pedido.
+      operationId: atualizarPedido
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: '#/definitions/PedidoCriacao'
+      responses:
+        200:
+          description: Pedido atualizado com sucesso
+          schema:
+            $ref: '#/definitions/Pedido'
+        400:
+          $ref: '#/responses/BadRequest'
+        404:
+          $ref: '#/responses/NotFound'
+
+    patch:
+      tags: [pedidos]
+      summary: Atualizar parcialmente um pedido
+      description: Atualiza campos específicos de um pedido.
+      operationId: atualizarParcialPedido
+      consumes:
+        - application/json
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            $ref: '#/definitions/PedidoPatch'
+      responses:
+        200:
+          description: Pedido atualizado
+          schema:
+            $ref: '#/definitions/Pedido'
+        404:
+          $ref: '#/responses/NotFound'
+
+    delete:
+      tags: [pedidos]
+      summary: Cancelar pedido
+      description: Cancela um pedido (não exclui fisicamente).
+      operationId: cancelarPedido
+      responses:
+        204:
+          description: Pedido cancelado com sucesso
+        404:
+          $ref: '#/responses/NotFound'
+
+  /pedidos/{pedidoId}/itens:
+    get:
+      tags: [pedidos]
+      summary: Listar itens do pedido
+      operationId: listarItensPedido
+      parameters:
+        - $ref: '#/parameters/PedidoId'
+      produces:
+        - application/json
+      responses:
+        200:
+          description: Itens do pedido
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/ItemPedido'
+
+  /clientes/{clienteId}/pedidos:
+    get:
+      tags: [clientes, pedidos]
+      summary: Listar pedidos do cliente
+      operationId: listarPedidosCliente
+      parameters:
+        - $ref: '#/parameters/ClienteId'
+        - $ref: '#/parameters/LimitQuery'
+        - $ref: '#/parameters/OffsetQuery'
+      produces:
+        - application/json
+      responses:
+        200:
+          description: Pedidos do cliente
+          schema:
+            type: array
+            items:
+              $ref: '#/definitions/Pedido'
+
+  /produtos/upload:
+    post:
+      tags: [produtos]
+      summary: Upload de imagem do produto
+      description: Faz upload de uma imagem para o produto. NOTA - em 2.0 formData usa in:formData.
+      operationId: uploadImagemProduto
+      consumes:
+        - multipart/form-data
+      parameters:
+        - name: arquivo
+          in: formData
+          required: true
+          type: file
+          description: Arquivo de imagem (JPEG ou PNG)
+        - name: descricao
+          in: formData
+          required: false
+          type: string
+          description: Descrição da imagem
+      produces:
+        - application/json
+      responses:
+        200:
+          description: Upload realizado com sucesso
+          schema:
+            type: object
+            properties:
+              url:
+                type: string
+                format: uri
+                example: "https://cdn.exemplo.com/produtos/img123.jpg"
+
+# ─── Definições (Schemas) ──────────────────────────────────────────────────
+definitions:
+
+  Pedido:
+    type: object
+    required:
+      - id
+      - status
+      - clienteId
+      - itens
+      - total
+      - criadoEm
+    properties:
+      id:
+        type: integer
+        format: int64
+        readOnly: true
+        example: 1001
+        description: Identificador único do pedido
+      status:
+        type: string
+        enum: [pendente, processando, enviado, entregue, cancelado]
+        example: pendente
+        description: Status atual do pedido
+      clienteId:
+        type: integer
+        format: int64
+        example: 42
+        description: ID do cliente que realizou o pedido
+      enderecoEntrega:
+        $ref: '#/definitions/Endereco'
+      itens:
+        type: array
+        minItems: 1
+        items:
+          $ref: '#/definitions/ItemPedido'
+      subtotal:
+        type: number
+        format: double
+        example: 199.90
+        description: Valor dos produtos sem frete e descontos
+      desconto:
+        type: number
+        format: double
+        example: 10.00
+        default: 0
+        description: Valor do desconto aplicado
+      frete:
+        type: number
+        format: double
+        example: 15.00
+        description: Valor do frete
+      total:
+        type: number
+        format: double
+        example: 204.90
+        description: Valor total do pedido
+      observacoes:
+        type: string
+        maxLength: 500
+        example: "Entregar no período da tarde"
+      criadoEm:
+        type: string
+        format: date-time
+        readOnly: true
+        example: "2024-01-15T10:30:00Z"
+      atualizadoEm:
+        type: string
+        format: date-time
+        readOnly: true
+        example: "2024-01-15T14:00:00Z"
+      metadata:
+        type: object
+        additionalProperties:
+          type: string
+        description: Metadados adicionais chave-valor
+        example:
+          origem: "app-mobile"
+          campanha: "black-friday"
+
+  PedidoCriacao:
+    type: object
+    required:
+      - clienteId
+      - itens
+    properties:
+      clienteId:
+        type: integer
+        format: int64
+        example: 42
+      enderecoEntregaId:
+        type: integer
+        format: int64
+        example: 7
+        description: ID do endereço de entrega cadastrado
+      itens:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          required:
+            - produtoId
+            - quantidade
+          properties:
+            produtoId:
+              type: integer
+              format: int64
+              example: 555
+            quantidade:
+              type: integer
+              minimum: 1
+              example: 2
+      cupomDesconto:
+        type: string
+        pattern: '^[A-Z0-9]{6,12}$'
+        example: "PROMO10"
+      observacoes:
+        type: string
+        maxLength: 500
+
+  PedidoPatch:
+    type: object
+    description: Campos que podem ser atualizados parcialmente
+    properties:
+      status:
+        type: string
+        enum: [processando, enviado, entregue, cancelado]
+      observacoes:
+        type: string
+        maxLength: 500
+
+  ItemPedido:
+    type: object
+    required:
+      - produtoId
+      - quantidade
+      - precoUnitario
+    properties:
+      id:
+        type: integer
+        format: int64
+        readOnly: true
+      produtoId:
+        type: integer
+        format: int64
+        example: 555
+      nomeProduto:
+        type: string
+        example: "Camiseta Polo"
+      quantidade:
+        type: integer
+        minimum: 1
+        example: 2
+      precoUnitario:
+        type: number
+        format: double
+        example: 99.95
+      subtotal:
+        type: number
+        format: double
+        readOnly: true
+        example: 199.90
+
+  Endereco:
+    type: object
+    required:
+      - logradouro
+      - numero
+      - cidade
+      - estado
+      - cep
+      - pais
+    properties:
+      logradouro:
+        type: string
+        example: "Rua das Flores"
+      numero:
+        type: string
+        example: "123"
+      complemento:
+        type: string
+        example: "Apto 42"
+      bairro:
+        type: string
+        example: "Centro"
+      cidade:
+        type: string
+        example: "São Paulo"
+      estado:
+        type: string
+        minLength: 2
+        maxLength: 2
+        example: "SP"
+      cep:
+        type: string
+        pattern: '^\d{5}-?\d{3}$'
+        example: "01001-000"
+      pais:
+        type: string
+        default: "BR"
+        example: "BR"
+
+  Erro:
+    type: object
+    required:
+      - codigo
+      - mensagem
+    properties:
+      codigo:
+        type: string
+        example: "PEDIDO_NAO_ENCONTRADO"
+      mensagem:
+        type: string
+        example: "O pedido solicitado não foi encontrado"
+      detalhes:
+        type: array
+        items:
+          type: object
+          properties:
+            campo:
+              type: string
+              example: "clienteId"
+            descricao:
+              type: string
+              example: "Campo obrigatório"
+      timestamp:
+        type: string
+        format: date-time
+        example: "2024-01-15T10:30:00Z"
+      traceId:
+        type: string
+        example: "abc-123-def-456"
+
+# ─── Documentação externa ──────────────────────────────────────────────────
+externalDocs:
+  description: Documentação completa da API
+  url: "https://docs.exemplo.com"

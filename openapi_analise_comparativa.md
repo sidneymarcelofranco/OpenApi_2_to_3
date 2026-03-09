@@ -1,0 +1,496 @@
+# OpenAPI 2.0 vs 3.x — Análise Comparativa e Engenharia Reversa erwin DM
+
+> Documento técnico de referência — Versão 1.0 | 2025
+
+---
+
+## Índice
+
+1. [Introdução](#1-introdução)
+2. [erwin DM e Engenharia Reversa de OpenAPI](#2-erwin-dm-e-engenharia-reversa-de-openapi)
+   - 2.1 [Suporte Nativo do erwin DM](#21-suporte-nativo-do-erwin-dm)
+   - 2.2 [O que o erwin DM Efetivamente Importa](#22-o-que-o-erwin-dm-efetivamente-importa)
+   - 2.3 [Como o erwin Armazena as Informações](#23-como-o-erwin-armazena-as-informações)
+   - 2.4 [Análise dos Erros ao Importar OpenAPI 2.0 no erwin](#24-análise-dos-erros-ao-importar-openapi-20-no-erwin)
+   - 2.5 [Recomendações para Importação no erwin DM](#25-recomendações-para-importação-no-erwin-dm)
+3. [Comparativo de Campos: OpenAPI 2.0 vs 3.x](#3-comparativo-de-campos-openapi-20-vs-3x)
+4. [Principais Mudanças entre 2.0 e 3.x](#4-principais-mudanças-entre-20-e-3x)
+5. [Exemplos YAML](#5-exemplos-yaml)
+6. [Scripts Python](#6-scripts-python)
+7. [Guia de Referência Rápida](#7-guia-de-referência-rápida)
+8. [Conclusão](#8-conclusão)
+
+---
+
+## 1. Introdução
+
+O OpenAPI Specification (OAS) é o padrão mais adotado para descrição de APIs REST. A versão 2.0, historicamente conhecida como **Swagger**, foi amplamente adotada e ainda está presente em grande parte das APIs legadas. A versão 3.x representou uma reestruturação significativa do padrão, trazendo maior flexibilidade, suporte a múltiplos servidores, polimorfismo de schemas e melhor separação entre corpo de requisição e parâmetros de URL.
+
+Este documento cobre:
+
+- Análise de engenharia reversa do erwin DM ao importar arquivos OpenAPI 2.0 e 3.0
+- O que o erwin efetivamente importa e como armazena as informações
+- Análise dos erros e comportamentos observados ao importar arquivos 2.0 no importador 3.0 do erwin
+- Tabela comparativa completa de campos: o que mudou, o que foi migrado e o que foi descontinuado
+- Exemplos YAML comentados — `openapi_2.0_example.yaml` e `openapi_3.0_example.yaml`
+- Três scripts Python: migrador 2.x→3.x, migrador 3.x→2.x e validador de sintaxe
+
+---
+
+## 2. erwin DM e Engenharia Reversa de OpenAPI
+
+### 2.1 Suporte Nativo do erwin DM
+
+O erwin Data Modeler (DM) oferece importação nativa de especificações **OpenAPI 3.0**. Não existe opção de importação dedicada ao formato 2.0 (Swagger). Ao tentar carregar um arquivo Swagger 2.0 através do importador OpenAPI 3.0, o erwin tenta processar o arquivo, mas encontra incompatibilidades estruturais que resultam em erros e importação parcial.
+
+### 2.2 O que o erwin DM Efetivamente Importa
+
+| Elemento OpenAPI | Mapeado para | Como é Armazenado | Nível de Importação |
+|---|---|---|---|
+| `info` (title, version, desc) | Metadados do modelo | info.title → Nome do modelo; info.version → versão | ✅ Completo |
+| `servers[].url` | Propriedade de conectividade | URL base armazenada como endpoint do modelo físico | ⚠️ Parcial |
+| `paths.*` (endpoints) | Entidade/Recurso | Cada path vira um objeto no diagrama; método HTTP vira operação | ✅ Completo |
+| `parameters` (query/path/header) | Atributos da operação | Parâmetros viram atributos com tipo, obrigatoriedade e localização | ✅ Completo |
+| `requestBody.content.*.schema` | Entidade de request | Schema do body vira entidade separada ou atributos inline | ⚠️ Parcial |
+| `responses.*.content.*.schema` | Entidade de response | Schemas de response viram entidades; código HTTP armazenado | ⚠️ Parcial |
+| `components/schemas` | Entidades globais | Schemas globais viram entidades reutilizáveis no modelo | ✅ Completo |
+| `components/parameters` | Parâmetros globais | Parâmetros reutilizáveis armazenados como atributos globais | ⚠️ Parcial |
+| `components/responses` | Respostas globais | Respostas reutilizáveis; schema associado vira entidade | ⚠️ Parcial |
+| `components/securitySchemes` | Propriedades de segurança | Armazenados como configuração do modelo; não viram entidades ER | ⚠️ Parcial |
+| `tags` | Grupos/Domínios | Tags organizam operações em grupos no modelo visual | ✅ Completo |
+| `$ref` (interno) | Relacionamento entre entidades | $ref resolvido; entidade referenciada ligada por relacionamento | ✅ Completo |
+| `externalDocs` | — | Campo ignorado pelo importador do erwin DM | ❌ Ignorado |
+| `callbacks` / `webhooks` | — | Não existe equivalente no modelo erwin; ignorado | ❌ Ignorado |
+| `links` (3.0) | — | Links HATEOAS não têm representação no modelo ER do erwin | ❌ Ignorado |
+| `x-extensions` | Propriedades customizadas | Extensões x-* armazenadas como propriedades extras | ✅ Completo |
+
+### 2.3 Como o erwin Armazena as Informações
+
+Internamente, o erwin DM representa a especificação OpenAPI em um modelo orientado a recursos (não puramente relacional). Os principais aspectos de armazenamento são:
+
+- **Recursos e Operações:** cada path (`/recurso`) se torna uma entidade-recurso. Cada método HTTP (GET, POST, etc.) vira uma operação associada ao recurso.
+- **Schemas/Entidades:** schemas definidos em `components/schemas` (3.0) ou `definitions` (2.0) são importados como entidades independentes. Relacionamentos são criados quando `$ref` é usado.
+- **Parâmetros:** parâmetros de query, path e header viram atributos da operação com metadados (tipo, obrigatoriedade, localização).
+- **Request Body:** o schema do `requestBody` é associado à operação; schemas inline viram entidades ad-hoc; schemas referenciados (`$ref`) apontam para a entidade global.
+- **Segurança:** esquemas de segurança são armazenados como configurações globais do modelo, não como entidades ER.
+- **Metadados:** `info.title`, `info.version` e `info.description` são armazenados como propriedades do modelo.
+
+### 2.4 Análise dos Erros ao Importar OpenAPI 2.0 no erwin
+
+| Tipo de Erro/Comportamento | Descrição | Solução Recomendada | Severidade |
+|---|---|---|---|
+| Erro de versão | erwin espera `openapi: 3.x.x`. Não reconhece `swagger: 2.0` como válido. | Migrar o arquivo para 3.0 antes de importar usando `migrador_2to3.py`. | 🔴 Crítico |
+| Falha em `securityDefinitions` | erwin não processa `securityDefinitions` (chave do 2.0). Em 3.0 é `components/securitySchemes`. | Converter com migrador. erwin pode importar mas ignorar autenticação. | 🟠 Alto |
+| Parâmetros `body`/`formData` | erwin não mapeia `in: body` e `in: formData` para entidades. Ficam sem correspondência no modelo. | Em 3.0 tornam-se `requestBody` com `content{}`. Verificar manualmente após import. | 🟠 Alto |
+| `$ref` desatualizado | Referências `#/definitions/X` são inválidas em 3.0. Se erwin tenta parsear como 3.0, os $ref quebram. | `migrador_2to3.py` atualiza todos os $ref automaticamente para `#/components/schemas/X`. | 🟠 Alto |
+| `consumes`/`produces` ignorados | Campos globais `consumes` e `produces` são ignorados pelo importador 3.0. | Em 3.0 não existem mais; o media type fica em `content{}`. Sem impacto se migrado. | 🟡 Médio |
+| `definitions` vs `schemas` | erwin espera schemas em `components/schemas`. Os `definitions` podem ser ignorados ou importados parcialmente. | Migrar para 3.0. Verificar se todas as entidades foram geradas após import. | 🟡 Médio |
+| `type: file` | `type: file` em parâmetros formData não é suportado em 3.0. Pode gerar erro de schema inválido. | Em 3.0 usar `type: string, format: binary` dentro de `requestBody multipart/form-data`. | 🟡 Médio |
+| `host`/`basePath`/`schemes` | erwin pode não montar a URL base corretamente a partir dos três campos separados. | Em 3.0 a URL completa está em `servers[].url` — formato preferido pelo erwin. | 🟢 Baixo |
+| Tags sem declaração raiz | erwin pode importar tags sem que estejam declaradas na seção `tags` raiz, gerando grupos sem descrição. | Declarar todas as tags na seção `tags` da raiz da especificação. | 🟢 Baixo |
+| Campos `x-` (extensões) | Extensões `x-*` são aceitas em ambas versões e preservadas pelo erwin como propriedades customizadas. | Sem ação necessária. | ℹ️ Info |
+
+### 2.5 Recomendações para Importação no erwin DM
+
+1. **Converter** o arquivo 2.0 para 3.0 usando o script `migrador_2to3.py` fornecido.
+2. **Validar** o arquivo resultante com `validador_openapi.py` para garantir que não há erros de sintaxe.
+3. **Certificar-se** de que schemas estão em `components/schemas` (não em `definitions`).
+4. **Usar** `requestBody` em vez de `in: body` e `in: formData`.
+5. **Após importação**, verificar manualmente se todos os schemas foram gerados e se os relacionamentos por `$ref` estão corretos.
+
+---
+
+## 3. Comparativo de Campos: OpenAPI 2.0 vs 3.x
+
+**Legenda:**
+- ✅ `MANTIDO` — campo idêntico em ambas as versões
+- 🟡 `ALTERADO` — existe em ambas, mas com nome, localização ou comportamento diferente
+- 🟢 `NOVO` — inexistente no 2.0, adicionado no 3.x
+- 🔴 `REMOVIDO` — presente no 2.0, descontinuado no 3.x (pode ter equivalente)
+
+| Categoria | Campo 2.0 | Campo 3.0 | Status | Observação |
+|---|---|---|---|---|
+| Versão | `swagger: "2.0"` | `openapi: "3.0.3"` | 🟡 ALTERADO | Campo raiz renomeado |
+| Info | `info.title` | `info.title` | ✅ MANTIDO | Sem alteração |
+| Info | `info.version` | `info.version` | ✅ MANTIDO | Sem alteração |
+| Info | `info.description` | `info.description` | ✅ MANTIDO | Sem alteração |
+| Info | `info.termsOfService` | `info.termsOfService` | ✅ MANTIDO | Sem alteração |
+| Info | `info.contact` | `info.contact` | ✅ MANTIDO | Sem alteração |
+| Info | `info.license` | `info.license` | ✅ MANTIDO | Sem alteração |
+| Servidor | `host` | *(removido)* | 🔴 REMOVIDO | Substituído por `servers[].url` |
+| Servidor | `basePath` | *(removido)* | 🔴 REMOVIDO | Substituído por `servers[].url` |
+| Servidor | `schemes` | *(removido)* | 🔴 REMOVIDO | Substituído por `servers[].url` |
+| Servidor | *(não existe)* | `servers[].url` | 🟢 NOVO | Array de servidores com URL completa + variáveis |
+| Servidor | *(não existe)* | `servers[].description` | 🟢 NOVO | Descrição do ambiente (prod, sandbox...) |
+| Servidor | *(não existe)* | `servers[].variables` | 🟢 NOVO | Variáveis de URL substituíveis |
+| Conteúdo | `consumes` (raiz/op) | *(removido)* | 🔴 REMOVIDO | Substituído por `requestBody.content` |
+| Conteúdo | `produces` (raiz/op) | *(removido)* | 🔴 REMOVIDO | Substituído por `responses.content` |
+| Conteúdo | *(não existe)* | `requestBody.content` | 🟢 NOVO | Media types declarados por operação com schema específico |
+| Schemas | `definitions.*` | `components/schemas/*` | 🟡 ALTERADO | Movido para `components`; $ref atualizado correspondentemente |
+| Schemas | `type: file` (formData) | `format: binary` | 🟡 ALTERADO | `type:file` substituído por `type:string + format:binary` |
+| Parâmetros | `parameters` (raiz) | `components/parameters/*` | 🟡 ALTERADO | Movido para `components/parameters` |
+| Parâmetros | `in: body` | `requestBody` | 🟡 ALTERADO | `in:body` removido; usa `requestBody` separado |
+| Parâmetros | `in: formData` | `requestBody multipart` | 🟡 ALTERADO | `in:formData` removido; usa `requestBody` com `multipart/form-data` |
+| Parâmetros | `in: query/path/header` | `in: query/path/header` | ✅ MANTIDO | Locais comuns mantidos |
+| Parâmetros | *(não existe)* | `in: cookie` | 🟢 NOVO | Suporte nativo a parâmetros de cookie |
+| Parâmetros | `type/format` direto | dentro de `schema{}` | 🟡 ALTERADO | Em 3.0, `type/format` ficam dentro do objeto `schema:` |
+| Parâmetros | *(não existe)* | `content{}` em parâmetro | 🟢 NOVO | Parâmetro pode usar `content{}` para media types complexos |
+| Respostas | `responses` (raiz) | `components/responses/*` | 🟡 ALTERADO | Movido para `components/responses` |
+| Respostas | `response.schema` | `response.content.*.schema` | 🟡 ALTERADO | Schema agora está dentro de `content.<mediatype>.schema` |
+| Respostas | `response.examples` | `response.content.*.examples` | 🟡 ALTERADO | Exemplos agora por media type |
+| Respostas | `headers.*.type` | `headers.*.schema.type` | 🟡 ALTERADO | Headers em respostas também usam `schema{}` |
+| Segurança | `securityDefinitions.*` | `components/securitySchemes/*` | 🟡 ALTERADO | Movido para `components/securitySchemes` |
+| Segurança | `type: basic` | `type: http, scheme: basic` | 🟡 ALTERADO | `basic` vira subscheme do tipo `http` |
+| Segurança | `type: apiKey` (bearer) | `type: http, scheme: bearer` | 🟡 ALTERADO | JWT bearer vira subscheme do tipo `http` |
+| Segurança | `type: apiKey` | `type: apiKey` | ✅ MANTIDO | Comportamento idêntico |
+| Segurança | `type: oauth2, flow: ...` | `type: oauth2, flows: {…}` | 🟡 ALTERADO | `flow` singular → `flows` plural; múltiplos flows por scheme |
+| Segurança | `flow: accessCode` | `flows.authorizationCode` | 🟡 ALTERADO | Nome do flow renomeado |
+| Segurança | `flow: application` | `flows.clientCredentials` | 🟡 ALTERADO | Nome do flow renomeado |
+| Segurança | *(não existe)* | `type: openIdConnect` | 🟢 NOVO | Suporte nativo a OpenID Connect |
+| Segurança | *(não existe)* | `type: mutualTLS` | 🟢 NOVO | Autenticação mTLS (OpenAPI 3.1) |
+| Components | *(não existe)* | `components/requestBodies` | 🟢 NOVO | Request bodies reutilizáveis |
+| Components | *(não existe)* | `components/headers` | 🟢 NOVO | Headers reutilizáveis |
+| Components | *(não existe)* | `components/examples` | 🟢 NOVO | Exemplos nomeados e reutilizáveis |
+| Components | *(não existe)* | `components/links` | 🟢 NOVO | Links entre operações (HATEOAS) |
+| Components | *(não existe)* | `components/callbacks` | 🟢 NOVO | Webhooks/callbacks definidos por operação |
+| Components | *(não existe)* | `components/pathItems` | 🟢 NOVO | Path items reutilizáveis (OpenAPI 3.1) |
+| Paths | `paths.*` | `paths.*` | ✅ MANTIDO | Estrutura de paths mantida |
+| Paths | *(não existe)* | `webhooks` (raiz) | 🟢 NOVO | Webhooks de nível raiz (OpenAPI 3.1) |
+| Operação | `operationId` | `operationId` | ✅ MANTIDO | Sem alteração |
+| Operação | `tags` | `tags` | ✅ MANTIDO | Sem alteração |
+| Operação | `summary` | `summary` | ✅ MANTIDO | Sem alteração |
+| Operação | `description` | `description` | ✅ MANTIDO | Sem alteração |
+| Operação | `deprecated` | `deprecated` | ✅ MANTIDO | Sem alteração |
+| Operação | `externalDocs` | `externalDocs` | ✅ MANTIDO | Sem alteração |
+| Operação | *(não existe)* | `callbacks` | 🟢 NOVO | Callbacks/webhooks definidos por operação |
+| Operação | *(não existe)* | `servers` (por operação) | 🟢 NOVO | Override de server por operação |
+| Schema | `x-*` | `x-*` | ✅ MANTIDO | Extensões mantidas em ambas versões |
+| Schema | `allOf` | `allOf` | ✅ MANTIDO | Sem alteração |
+| Schema | *(não existe)* | `oneOf` | 🟢 NOVO | Discriminador polimórfico |
+| Schema | *(não existe)* | `anyOf` | 🟢 NOVO | Discriminador polimórfico |
+| Schema | *(não existe)* | `not` | 🟢 NOVO | Negação de schema |
+| Schema | `readOnly` | `readOnly` | ✅ MANTIDO | Sem alteração |
+| Schema | *(não existe)* | `writeOnly` | 🟢 NOVO | Campo somente escrita (não aparece em GET) |
+| Schema | *(não existe)* | `nullable` | 🟢 NOVO | Permite valor null além do tipo declarado |
+| Schema | *(não existe)* | `discriminator` | 🟢 NOVO | Mapeamento de propriedade para subschemas |
+| Schema | `example` (inline) | `example` / `examples` | 🟡 ALTERADO | 3.0 adiciona `examples` plural como objeto nomeado |
+| Misc | `tags` (raiz) | `tags` (raiz) | ✅ MANTIDO | Sem alteração |
+| Misc | `externalDocs` (raiz) | `externalDocs` (raiz) | ✅ MANTIDO | Sem alteração |
+| Misc | `security` (raiz) | `security` (raiz) | ✅ MANTIDO | Sem alteração |
+
+---
+
+## 4. Principais Mudanças entre 2.0 e 3.x
+
+### 4.1 Reestruturação do Servidor
+
+A mudança mais visível é a eliminação dos campos `host`, `basePath` e `schemes`, substituídos pelo array `servers`:
+
+```yaml
+# OpenAPI 2.0
+host: api.exemplo.com
+basePath: /v1
+schemes:
+  - https
+
+# OpenAPI 3.0
+servers:
+  - url: https://api.exemplo.com/v1
+    description: Produção
+  - url: https://sandbox.exemplo.com/v1
+    description: Sandbox
+```
+
+### 4.2 Corpo da Requisição
+
+Em 2.0, o body era um parâmetro com `in: body`. Em 3.0 existe o objeto `requestBody` separado, permitindo especificar diferentes representações com schemas distintos:
+
+```yaml
+# OpenAPI 2.0
+parameters:
+  - name: body
+    in: body
+    required: true
+    schema:
+      $ref: "#/definitions/Pedido"
+
+# OpenAPI 3.0
+requestBody:
+  required: true
+  content:
+    application/json:
+      schema:
+        $ref: "#/components/schemas/Pedido"
+    application/xml:
+      schema:
+        $ref: "#/components/schemas/Pedido"
+```
+
+### 4.3 Upload de Arquivo
+
+```yaml
+# OpenAPI 2.0
+parameters:
+  - name: arquivo
+    in: formData
+    type: file         # ← type: file (exclusivo do 2.0)
+
+# OpenAPI 3.0
+requestBody:
+  content:
+    multipart/form-data:
+      schema:
+        properties:
+          arquivo:
+            type: string
+            format: binary   # ← substitui type: file
+```
+
+### 4.4 Componentes Reutilizáveis
+
+O 2.0 tinha seções de nível raiz separadas. O 3.0 consolida tudo sob `components`:
+
+| OpenAPI 2.0 (raiz) | OpenAPI 3.0 (`components/*`) |
+|---|---|
+| `definitions/*` | `components/schemas/*` |
+| `parameters/*` | `components/parameters/*` |
+| `responses/*` | `components/responses/*` |
+| `securityDefinitions/*` | `components/securitySchemes/*` |
+| *(não existe)* | `components/requestBodies/*` 🟢 |
+| *(não existe)* | `components/headers/*` 🟢 |
+| *(não existe)* | `components/examples/*` 🟢 |
+| *(não existe)* | `components/links/*` 🟢 |
+| *(não existe)* | `components/callbacks/*` 🟢 |
+
+### 4.5 Segurança
+
+```yaml
+# OpenAPI 2.0
+securityDefinitions:
+  BearerAuth:
+    type: apiKey
+    in: header
+    name: Authorization
+  BasicAuth:
+    type: basic
+  OAuth2:
+    type: oauth2
+    flow: accessCode          # ← flow singular, um por scheme
+    authorizationUrl: "..."
+    tokenUrl: "..."
+    scopes: {}
+
+# OpenAPI 3.0
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http              # ← tipo http com scheme bearer
+      scheme: bearer
+      bearerFormat: JWT
+    BasicAuth:
+      type: http
+      scheme: basic
+    OAuth2:
+      type: oauth2
+      flows:                  # ← flows plural, múltiplos suportados
+        authorizationCode:    # ← accessCode → authorizationCode
+          authorizationUrl: "..."
+          tokenUrl: "..."
+          scopes: {}
+```
+
+### 4.6 Polimorfismo de Schemas
+
+| Construção | 2.0 | 3.0 |
+|---|---|---|
+| `allOf` | ✅ | ✅ |
+| `oneOf` | ❌ | ✅ |
+| `anyOf` | ❌ | ✅ |
+| `not` | ❌ | ✅ |
+| `discriminator` | ❌ | ✅ |
+| `nullable` | ❌ | ✅ |
+| `writeOnly` | ❌ | ✅ |
+
+---
+
+## 5. Exemplos YAML
+
+Dois arquivos de referência foram criados modelando a mesma API (**Gestão de Pedidos**) para facilitar comparação direta.
+
+### 5.1 Recursos Modelados nos Exemplos
+
+| Endpoint | Métodos | Descrição |
+|---|---|---|
+| `/pedidos` | GET, POST | Listagem paginada com filtros e criação |
+| `/pedidos/{pedidoId}` | GET, PUT, PATCH, DELETE | CRUD completo |
+| `/pedidos/{pedidoId}/itens` | GET | Sub-recurso de itens |
+| `/clientes/{clienteId}/pedidos` | GET | Multi-tag (clientes + pedidos) |
+| `/produtos/upload` | POST | Upload multipart/form-data |
+
+### 5.2 Schemas Modelados
+
+`Pedido`, `PedidoCriacao`, `PedidoPatch`, `ItemPedido`, `Endereco`, `Erro`
+
+### 5.3 Atributos Cobertos por Versão
+
+**`openapi_2.0_example.yaml`:** `swagger`, `info`, `host`, `basePath`, `schemes`, `consumes`, `produces`, `security`, `securityDefinitions` (apiKey/basic/oauth2), `tags`, `parameters` (raiz), `responses` (raiz), paths com GET/POST/PUT/PATCH/DELETE, `in:body`, `in:formData`, `in:path/query/header`, `definitions`, `$ref`, `readOnly`, enums, formats, `additionalProperties`, `example`
+
+**`openapi_3.0_example.yaml`:** `openapi`, `info`, `servers` (múltiplos), `security`, `components/schemas`, `components/parameters`, `components/responses`, `components/securitySchemes` (http-bearer/basic/oauth2-authorizationCode), `components/links`, `components/examples`, `requestBody`, `content` (json/xml/multipart), `format:binary`, responses com `content` e `examples` nomeados, `tags`, `externalDocs`
+
+---
+
+## 6. Scripts Python
+
+### 6.1 `migrador_2to3.py` — OpenAPI 2.x → 3.x
+
+```bash
+python migrador_2to3.py entrada.yaml saida.yaml
+python migrador_2to3.py entrada.yaml            # imprime na stdout
+```
+
+**Cobertura de migração:**
+- `swagger` → `openapi: "3.0.3"`
+- `host` + `basePath` + `schemes` → `servers[]`
+- `consumes`/`produces` → `requestBody.content` e `responses.content`
+- `securityDefinitions` → `components/securitySchemes`
+  - `type: basic` → `type: http, scheme: basic`
+  - `type: apiKey` (Authorization header) → `type: http, scheme: bearer`
+  - `oauth2 flow: accessCode` → `flows.authorizationCode`
+  - `oauth2 flow: application` → `flows.clientCredentials`
+- `definitions` → `components/schemas`
+- `parameters` (raiz) → `components/parameters`
+- `responses` (raiz) → `components/responses`
+- `in: body` → `requestBody`
+- `in: formData` com `type: file` → `requestBody multipart/form-data` com `format: binary`
+- `type`/`format`/`enum` direto no parâmetro → dentro de `schema{}`
+- Todos os `$ref` atualizados: `#/definitions/` → `#/components/schemas/`, etc.
+
+### 6.2 `migrador_3to2.py` — OpenAPI 3.x → 2.x
+
+```bash
+python migrador_3to2.py entrada.yaml saida.yaml
+python migrador_3to2.py entrada.yaml            # imprime na stdout
+```
+
+**Cobertura de migração:**
+- `openapi` → `swagger: "2.0"`
+- `servers[]` → `host` + `basePath` + `schemes`
+- `components/schemas` → `definitions`
+- `components/parameters` → `parameters` (raiz)
+- `components/responses` → `responses` (raiz)
+- `components/securitySchemes` → `securityDefinitions`
+- `requestBody` (json/xml) → `in: body`
+- `requestBody multipart/form-data` → `in: formData`
+- `format: binary` → `type: file`
+- `responses content` → `schema` + `produces`
+- `parameters schema{}` → tipo direto no parâmetro
+- Todos os `$ref` atualizados: `#/components/schemas/` → `#/definitions/`, etc.
+
+**Limitações inerentes ao formato 2.0:**
+- `servers[]` múltiplos: usa apenas o primeiro; demais salvos em `x-servers`
+- `links`, `callbacks` e `webhooks`: descartados (não existem em 2.0)
+- `oneOf` / `anyOf` / `not`: sem equivalente direto em 2.0
+- Multiple content types por resposta: usa o primeiro (JSON preferido)
+- `in: cookie` → convertido para `in: header` com aviso
+- OAuth2 com múltiplos flows: apenas o primeiro flow é exportado
+
+### 6.3 `validador_openapi.py` — Validador de Sintaxe
+
+```bash
+python validador_openapi.py arquivo.yaml
+python validador_openapi.py arquivo.yaml --json      # saída em JSON
+python validador_openapi.py arquivo.yaml --resumo    # apenas resumo
+python validador_openapi.py arquivo.yaml --sem-cor   # sem cores ANSI
+```
+
+**Retorna** exit code `0` se válido, `1` se houver erros (integrável em CI/CD).
+
+**Verificações realizadas:**
+
+| Verificação | 2.0 | 3.0 |
+|---|---|---|
+| Sintaxe YAML válida | ✅ | ✅ |
+| Detecção automática de versão | ✅ | ✅ |
+| Campos obrigatórios (`info`, `title`, `version`, `paths`) | ✅ | ✅ |
+| Estrutura de servidores | ✅ | ✅ |
+| Paths começam com `/` | ✅ | ✅ |
+| Parâmetros (`name`, `in`, `required` para path) | ✅ | ✅ |
+| Schema dentro de `schema{}` nos parâmetros | — | ✅ |
+| `requestBody` com `content` não vazio | — | ✅ |
+| Respostas com `description` obrigatória | ✅ | ✅ |
+| Pelo menos um 2xx ou `default` por operação | ✅ | ✅ |
+| `$ref` internos resolvíveis | ✅ | ✅ |
+| `operationId` únicos | ✅ | ✅ |
+| Tags declaradas vs usadas | ✅ | ✅ |
+| Parâmetros de path declarados vs usados na URL | ✅ | ✅ |
+| Tipos válidos (`integer`, `string`, `object`...) | ✅ | ✅ |
+| Formatos conhecidos (`int32`, `date-time`, `uuid`...) | ✅ | ✅ |
+| Security schemes com tipos válidos | ✅ | ✅ |
+| Arrays com `items` definido | ✅ | ✅ |
+
+**Exemplo de saída:**
+
+```
+============================================================
+ VALIDADOR OPENAPI — minha_api.yaml
+============================================================
+  ℹ️  Versão detectada: OpenAPI 3.0.3 (família 3.x)
+
+  AVISOS (1):
+  ⚠️  [tags] Tag 'beta' usada em operações mas não declarada na seção 'tags'.
+         💡 Declare todas as tags em 'tags' para melhor documentação.
+
+  RESUMO:
+    Erros   : 0
+    Avisos  : 1
+    Status  : ✅ VÁLIDO
+```
+
+---
+
+## 7. Guia de Referência Rápida
+
+| Aspecto | OpenAPI 2.0 | OpenAPI 3.x |
+|---|---|---|
+| Campo raiz de versão | `swagger: "2.0"` | `openapi: "3.0.3"` |
+| Endpoint base | `host` + `basePath` + `schemes` | `servers[].url` |
+| Media type da requisição | `consumes: [application/json]` | `requestBody.content.<mime>` |
+| Media type da resposta | `produces: [application/json]` | `responses.*.content.<mime>` |
+| Body da requisição | `parameters: [{in: body}]` | `requestBody: {content: {...}}` |
+| Upload de arquivo | `{in: formData, type: file}` | `requestBody multipart format:binary` |
+| Schemas globais | `definitions.*` | `components/schemas/*` |
+| Parâmetros globais | `parameters.*` | `components/parameters/*` |
+| Respostas globais | `responses.*` | `components/responses/*` |
+| Segurança global | `securityDefinitions.*` | `components/securitySchemes.*` |
+| Auth Basic | `type: basic` | `type:http, scheme:basic` |
+| Auth Bearer/JWT | `type:apiKey, in:header, name:Authorization` | `type:http, scheme:bearer` |
+| OAuth2 flow code | `flow: accessCode` | `flows.authorizationCode` |
+| OAuth2 múltiplos flows | Não suportado | `flows: {implicit:{}, authCode:{}}` |
+| OpenID Connect | Não suportado | `type: openIdConnect` |
+| Parâmetro cookie | Não suportado | `in: cookie` |
+| Campo nullable | Não suportado | `nullable: true` |
+| Campo writeOnly | Não suportado | `writeOnly: true` |
+| Polimorfismo oneOf/anyOf | Não suportado | `oneOf: [...]` / `anyOf: [...]` |
+| Links entre operações | Não suportado | `links: {operationId: ...}` |
+| Callbacks/Webhooks | Não suportado | `callbacks:` / `webhooks:` |
+| Exemplos nomeados | `examples: {mime: valor}` | `examples: {nome: {value:...}}` |
+| `$ref` para schemas | `#/definitions/Nome` | `#/components/schemas/Nome` |
+
+---
+
+## 8. Conclusão
+
+O OpenAPI 3.x representa uma evolução substancial em relação ao 2.0, com foco em maior expressividade, suporte a múltiplos ambientes, polimorfismo de schemas e organização centralizada de componentes. A migração de 2.0 para 3.x é recomendada para qualquer projeto que queira aproveitar ferramentas modernas de geração de código, documentação e engenharia reversa — incluindo o erwin DM.
+
+Para o contexto de uso com erwin DM, a conclusão é clara: **o erwin não suporta nativamente a importação do formato 2.0**. A importação via o importador 3.0 resulta em erros previsíveis e importação parcial. A solução mais robusta é usar o script `migrador_2to3.py` para converter o arquivo antes da importação, seguido de validação com `validador_openapi.py`.
+
+### Checklist de Migração 2.0 → 3.0
+
+- [ ] Converter arquivo com `migrador_2to3.py`
+- [ ] Validar saída com `validador_openapi.py`
+- [ ] Verificar schemas em `components/schemas` (não em `definitions`)
+- [ ] Confirmar `requestBody` em todas as operações com body
+- [ ] Checar security schemes em `components/securitySchemes`
+- [ ] Validar `$ref`: todos devem apontar para `#/components/...`
+- [ ] Testar importação no erwin DM
+- [ ] Verificar manualmente entidades geradas e relacionamentos `$ref`
